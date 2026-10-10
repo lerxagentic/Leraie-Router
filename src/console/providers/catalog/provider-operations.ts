@@ -197,10 +197,21 @@ export function createProviderCatalogOperations(config: ProviderCatalogConfig) {
         config.store.listAllAccounts(a.tenantId),
       ]);
       const configured = new Set(accounts.map((account) => account.providerId));
+      // Count only `active` credentials: the topology badge must reflect what is
+      // actually dispatchable, not every row ever persisted for the provider.
+      const activeCounts = new Map<string, number>();
+      for (const account of accounts) {
+        if (account.status !== "active") continue;
+        activeCounts.set(account.providerId, (activeCounts.get(account.providerId) ?? 0) + 1);
+      }
       return Promise.all(
         records.map((r) =>
           attachProviderCapabilities(
-            { ...sanitizeProviderResponse(r), configured: configured.has(r.providerId) },
+            {
+              ...sanitizeProviderResponse(r),
+              configured: configured.has(r.providerId),
+              activeAccountCount: activeCounts.get(r.providerId) ?? 0,
+            },
             config.providerRegistry,
           ),
         ),

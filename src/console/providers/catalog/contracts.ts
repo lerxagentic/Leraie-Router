@@ -502,6 +502,9 @@ export interface ProviderResponse {
   isBuiltIn: boolean;
   /** True when this tenant has any persisted account for the provider. */
   configured?: boolean;
+  /** How many of this provider's accounts are currently `active` — the live
+   * credential count the console renders (e.g. topology node badges). */
+  activeAccountCount?: number;
   /** `false` only for a genuinely credential-less provider (OpenCode Free) —
    * the dashboard hides account creation for it since none is usable. */
   requiresAccount: boolean;

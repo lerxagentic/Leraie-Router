@@ -11,10 +11,11 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Radio, Zap, Sparkles } from "lucide-react";
+import { Radio } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Inline } from "../../components/ui/inline";
 import { useConsoleLogStream } from "../../hooks/logs";
+import { useProviders } from "../../hooks/providers";
 
 /** A dispatch event without a terminal event must never leave a beam lit
  * forever. This also protects against an SSE reconnect snapshot where the
@@ -150,14 +151,22 @@ interface ProviderNodeData {
   imageUrl: string;
   textIcon: string;
   active: boolean;
+  /** Has at least one `active` credential, so the provider is dispatchable
+   * right now even when no request is in flight. */
+  available: boolean;
   activeModel?: string;
   accountCount?: number;
   isCompact?: boolean;
 }
 
 function ProviderNode({ data }: { data: ProviderNodeData }): ReactNode {
-  const { label, color, imageUrl, textIcon, active, activeModel, isCompact } = data;
+  const { label, color, imageUrl, textIcon, active, available, activeModel, isCompact } = data;
   const [imgError, setImgError] = useState(false);
+  // A provider lights up in two distinct ways: `active` means a request is
+  // being routed through it this instant, `available` means it holds usable
+  // credentials. Rendering them separately is what stops a provider with 191
+  // healthy keys from looking dead whenever traffic is idle.
+  const lit = active || available;
 
   return (
     <div
@@ -167,10 +176,16 @@ function ProviderNode({ data }: { data: ProviderNodeData }): ReactNode {
         gap: isCompact ? "6px" : "9px",
         padding: isCompact ? "6px 10px" : "8px 14px",
         borderRadius: "12px",
-        border: active ? `2px solid ${color}` : "1px solid var(--inner-border)",
+        border: active
+          ? `2px solid ${color}`
+          : available
+          ? `1.5px solid ${color}80`
+          : "1px solid var(--inner-border)",
         background: "var(--surface-1)",
         boxShadow: active
           ? `0 0 20px ${color}55, 0 4px 14px rgba(0,0,0,0.15)`
+          : available
+          ? `0 0 10px ${color}22, 0 2px 8px rgba(0,0,0,0.06)`
           : "0 2px 8px rgba(0,0,0,0.06)",
         minWidth: isCompact ? "120px" : "155px",
         maxWidth: isCompact ? "180px" : "240px",
@@ -217,7 +232,7 @@ function ProviderNode({ data }: { data: ProviderNodeData }): ReactNode {
             style={{
               fontSize: isCompact ? "11px" : "12px",
               fontWeight: 700,
-              color: active ? color : "var(--text-primary)",
+              color: lit ? color : "var(--text-primary)",
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
@@ -259,7 +274,11 @@ function ProviderNode({ data }: { data: ProviderNodeData }): ReactNode {
           </span>
         ) : (
           <span style={{ fontSize: "9.5px", color: "var(--text-tertiary)" }}>
-            {data.accountCount ? `${data.accountCount} active keys` : "Connected"}
+            {available
+              ? data.accountCount
+                ? `${data.accountCount} active keys`
+                : "Ready"
+              : "No active keys"}
           </span>
         )}
       </div>
@@ -398,6 +417,7 @@ function buildLayout(
   providers: readonly string[],
   activeMap: Map<string, { model?: string; active: boolean }>,
   accountCounts: Record<string, number>,
+  availableProviders: ReadonlySet<string>,
   containerWidth: number,
 ): { nodes: Node[]; edges: Edge[] } {
   const isCompact = containerWidth > 0 && containerWidth < 640;
@@ -451,6 +471,10 @@ function buildLayout(
     const active = Boolean(activeInfo?.active);
     const activeModel = activeInfo?.model;
     const accountCount = accountCounts[providerId.toLowerCase()] ?? 0;
+    // Dispatchable = holds at least one active credential, needs no credential
+    // at all, or is known-configured on a backend that does not report counts.
+    const available = accountCount > 0 || availableProviders.has(providerId.toLowerCase());
+    const lit = active || available;
 
     const nodeId = `provider-${providerId}`;
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / count;
@@ -483,6 +507,7 @@ function buildLayout(
         imageUrl: meta.icon,
         textIcon: meta.textIcon,
         active,
+        available,
         activeModel,
         accountCount,
         isCompact,
@@ -498,10 +523,11 @@ function buildLayout(
       target: nodeId,
       targetHandle,
       animated: false,
-      data: { active, color: meta.color },
+      data: { active: lit, color: meta.color },
       style: {
-        stroke: active ? meta.color : "var(--inner-border)",
-        strokeWidth: active ? 3 : 1.5,
+        stroke: lit ? meta.color : "var(--inner-border)",
+        strokeWidth: active ? 3 : lit ? 2 : 1.5,
+        opacity: active ? 1 : lit ? 0.75 : 1,
       },
     });
   });
@@ -523,23 +549,56 @@ export default function ProviderTopology({
   // Connect to live console logs stream for 100% REALTIME detection!
   const { lines, status: streamStatus } = useConsoleLogStream();
 
-  // Primary providers displayed in the circular topology
+  // The node set is the tenant's real provider catalog, not a fixed list: any
+  // provider that holds active credentials appears automatically, so adding a
+  // key in the console lights up a node here without a code change.
+  const providersQuery = useProviders();
+  const catalog = useMemo(() => providersQuery.data ?? [], [providersQuery.data]);
+
   const providerList = useMemo(
-    () => [
-      "antigravity",
-      "kiro",
-      "codex",
-      "cb",
-      "grok",
-      "dahl",
-      "opencode",
-    ],
-    [],
+    () =>
+      catalog
+        .filter((provider) => provider.enabled)
+        .filter(
+          (provider) =>
+            (provider.activeAccountCount ?? 0) > 0 ||
+            provider.requiresAccount === false ||
+            // An older backend omits `activeAccountCount`; fall back to the
+            // `configured` flag so providers with credentials stay visible
+            // instead of the topology emptying out against a stale binary.
+            provider.configured === true,
+        )
+        .map((provider) => provider.providerId),
+    [catalog],
+  );
+
+  // Live credential counts straight from the catalog response.
+  const accountCounts = useMemo<Record<string, number>>(() => {
+    const counts: Record<string, number> = {};
+    for (const provider of catalog) counts[provider.providerId.toLowerCase()] = provider.activeAccountCount ?? 0;
+    return counts;
+  }, [catalog]);
+
+  // Providers that are dispatchable even without a countable credential: a
+  // provider needing no key at all, or one whose count the backend did not
+  // report but that is known to have accounts configured.
+  const availableProviders = useMemo<ReadonlySet<string>>(
+    () =>
+      new Set(
+        catalog
+          .filter(
+            (p) =>
+              p.requiresAccount === false ||
+              (p.activeAccountCount ?? 0) > 0 ||
+              (p.activeAccountCount === undefined && p.configured === true),
+          )
+          .map((p) => p.providerId.toLowerCase()),
+      ),
+    [catalog],
   );
 
   // Active status per provider with linger decay
   const [activeMap, setActiveMap] = useState<Map<string, { model?: string; active: boolean }>>(new Map());
-  const lastSeenRef = useRef<Map<string, { model: string; timestamp: number }>>(new Map());
   /** Live requests keyed by requestId → the provider they are bound to.
    *  Populated on `request_dispatch` (provider known) and cleared on
    *  `request_complete`/`request_error`, so a beam is lit for exactly the
@@ -647,30 +706,17 @@ export default function ProviderTopology({
     return () => ro.disconnect();
   }, []);
 
-  const accountCounts = useMemo<Record<string, number>>(
-    () => ({
-      antigravity: 2,
-      kiro: 3,
-      codex: 1,
-      cb: 5,
-      grok: 191,
-      dahl: 8,
-      opencode: 4,
-    }),
-    [],
+  const { nodes, edges } = useMemo(
+    () => buildLayout(providerList, activeMap, accountCounts, availableProviders, containerWidth),
+    [providerList, activeMap, accountCounts, availableProviders, containerWidth],
   );
 
-  const { nodes, edges } = useMemo(
-    () => buildLayout(providerList, activeMap, accountCounts, containerWidth),
-    [providerList, activeMap, accountCounts, containerWidth],
+  const availableCount = useMemo(
+    () => providerList.filter((id) => availableProviders.has(id.toLowerCase())).length,
+    [providerList, availableProviders],
   );
 
   const fitOpts = { padding: 0.14, duration: 250 };
-
-  const handleSimulate = (pid: string, modelName: string) => {
-    lastSeenRef.current.set(pid.toLowerCase(), { model: modelName, timestamp: Date.now() });
-    setActiveMap((prev) => new Map(prev).set(pid.toLowerCase(), { model: modelName, active: true }));
-  };
 
   return (
     <div
@@ -698,54 +744,13 @@ export default function ProviderTopology({
           </Badge>
         </Inline>
 
-        {/* Quick Test Trigger Chips */}
+        {/* Live node summary: how many providers are dispatchable right now,
+            and how many are actually serving a request this instant. */}
         <Inline gap="6px" style={{ alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>Test Beam:</span>
-          <button
-            type="button"
-            onClick={() => handleSimulate("antigravity", "gemini-3.1-pro")}
-            style={{
-              fontSize: "10.5px",
-              padding: "2px 7px",
-              borderRadius: "5px",
-              border: "1px solid var(--inner-border)",
-              background: "var(--surface-muted)",
-              color: "var(--text-secondary)",
-              cursor: "pointer",
-            }}
-          >
-            <Zap size={10} style={{ display: "inline", marginRight: "3px" }} /> Antigravity
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSimulate("kiro", "claude-sonnet-4.5")}
-            style={{
-              fontSize: "10.5px",
-              padding: "2px 7px",
-              borderRadius: "5px",
-              border: "1px solid var(--inner-border)",
-              background: "var(--surface-muted)",
-              color: "var(--text-secondary)",
-              cursor: "pointer",
-            }}
-          >
-            <Sparkles size={10} style={{ display: "inline", marginRight: "3px" }} /> Kiro AI
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSimulate("grok", "grok-4.5")}
-            style={{
-              fontSize: "10.5px",
-              padding: "2px 7px",
-              borderRadius: "5px",
-              border: "1px solid var(--inner-border)",
-              background: "var(--surface-muted)",
-              color: "var(--text-secondary)",
-              cursor: "pointer",
-            }}
-          >
-            Grok
-          </button>
+          <span style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>
+            {providerList.length} providers · {availableCount} with keys
+            {activeMap.size > 0 ? ` · ${activeMap.size} serving` : ""}
+          </span>
         </Inline>
       </div>
 
