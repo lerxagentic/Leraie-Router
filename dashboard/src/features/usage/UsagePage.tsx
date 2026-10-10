@@ -120,6 +120,7 @@ const PERIOD_LABELS: Record<Period, string> = {
   "24h": "Last 24 Hours",
   "7d": "Last 7 Days",
   "30d": "Last 30 Days",
+  "60d": "Last 60 Days",
   all: "All retained",
 };
 const PERIOD_OPTIONS = USAGE_PERIODS.map((value) => ({

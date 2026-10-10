@@ -7,7 +7,7 @@
  * This module is intentionally free of Elysia / node:crypto so the dashboard
  * codegen can import the constant without bundling the backend graph.
  */
-export const USAGE_PERIODS = ["1h", "6h", "12h", "24h", "7d", "30d", "all"] as const;
+export const USAGE_PERIODS = ["1h", "6h", "12h", "24h", "7d", "30d", "60d", "all"] as const;
 
 /** One dashboard usage-period preset. */
 export type UsagePeriod = (typeof USAGE_PERIODS)[number];

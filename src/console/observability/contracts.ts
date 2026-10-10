@@ -265,7 +265,7 @@ export function createObservabilityOperations(config: ObservabilityConfig) {
           throw new ConsoleDomainError(
             "invalid_period",
             400,
-            `Unsupported usage period: ${period}. Use "24h", "7d", "30d", or "all".`,
+            `Unsupported usage period: ${period}. Use "1h", "6h", "12h", "24h", "7d", "30d", "60d", or "all".`,
           );
         }
         return config.store.usage(a.tenantId, period);
@@ -302,7 +302,7 @@ export function createObservabilityOperations(config: ObservabilityConfig) {
           throw new ConsoleDomainError(
             "invalid_period",
             400,
-            `Unsupported usage period: ${period}. Use "1h", "24h", "7d", "30d", or "all".`,
+            `Unsupported usage period: ${period}. Use "1h", "6h", "12h", "24h", "7d", "30d", "60d", or "all".`,
           );
         }
         return period;

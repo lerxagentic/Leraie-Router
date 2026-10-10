@@ -129,8 +129,9 @@ export const CONFIG_SPEC = {
     max: Number.MAX_SAFE_INTEGER,
   },
 
-  // Durable, metadata-only request telemetry retention.
-  CARTETHYIA_TELEMETRY_RETENTION_DAYS: { kind: "int", default: 30, min: 3, max: 365 },
+  // Durable, metadata-only request telemetry retention. `0` keeps every event
+  // forever (no pruning); any positive value is a rolling day window.
+  CARTETHYIA_TELEMETRY_RETENTION_DAYS: { kind: "int", default: 365, min: 0, max: 36500 },
   CARTETHYIA_TELEMETRY_PAYLOAD_MAX_BYTES: {
     kind: "int",
     default: 32 * 1024 * 1024,
@@ -667,6 +668,20 @@ export function resolveGithubEnterpriseDomain(): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Cutoff before which telemetry events are pruned, or `undefined` when
+ * retention is disabled (`CARTETHYIA_TELEMETRY_RETENTION_DAYS=0`).
+ *
+ * Returning `undefined` rather than a far-past date is deliberate: a cutoff of
+ * `Date.now()` or older would delete everything, so "keep forever" must be
+ * expressed as "no cutoff" and handled by the caller skipping the sweep.
+ */
+export function resolveTelemetryRetentionCutoff(): Date | undefined {
+  const days = resolveTelemetryRetentionDays();
+  if (days <= 0) return undefined;
+  return new Date(Date.now() - days * 24 * 60 * 60_000);
 }
 
 /** Metadata-only telemetry retention window; payload frames have their own short TTL. */

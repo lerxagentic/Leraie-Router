@@ -58,7 +58,7 @@ import {
   resolveModelStrikeThreshold,
   resolveModelStrikeWindowMs,
   resolveSsrfPolicy,
-  resolveTelemetryRetentionDays,
+  resolveTelemetryRetentionCutoff,
   resolveTrustedProxyBoundary,
 } from "../config";
 import type { TrustedProxyBoundary } from "../config";
@@ -248,10 +248,14 @@ export async function buildProductionDeps(): Promise<ProductionDeps> {
   scheduledTasks.register({
     name: "telemetry-retention",
     intervalMs: 6 * 60 * 60_000,
-    run: () =>
-      telemetryStore.pruneTelemetry(
-        new Date(Date.now() - resolveTelemetryRetentionDays() * 24 * 60 * 60_000),
-      ),
+    run: async () => {
+      // `undefined` cutoff = retention disabled (keep forever). Skipping is the
+      // only safe behaviour here: passing a missing cutoff through would sweep
+      // every row, which is the opposite of "keep everything".
+      const cutoff = resolveTelemetryRetentionCutoff();
+      if (!cutoff) return;
+      await telemetryStore.pruneTelemetry(cutoff);
+    },
   });
   const telemetryBuffer = new TelemetryBatchBuffer(db);
   const poolSelector = new NetworkPoolSelector(redis);

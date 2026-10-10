@@ -889,7 +889,7 @@ export const cliToolSettings = pgTable(
 
 
 // Metadata-only request telemetry. Retention is configured independently of
-// payload capture (`CARTETHYIA_TELEMETRY_RETENTION_DAYS`, default 30 days).
+// payload capture (`CARTETHYIA_TELEMETRY_RETENTION_DAYS`, default 365 days).
 // No prompt text, raw body, API key, encrypted-reasoning payload, or generic
 // `payload` column — the schema structurally prevents those fields.
 // Correlation columns intentionally have no catalog foreign keys, so a
