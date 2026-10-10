@@ -162,11 +162,10 @@ interface ProviderNodeData {
 function ProviderNode({ data }: { data: ProviderNodeData }): ReactNode {
   const { label, color, imageUrl, textIcon, active, available, activeModel, isCompact } = data;
   const [imgError, setImgError] = useState(false);
-  // A provider lights up in two distinct ways: `active` means a request is
-  // being routed through it this instant, `available` means it holds usable
-  // credentials. Rendering them separately is what stops a provider with 191
-  // healthy keys from looking dead whenever traffic is idle.
-  const lit = active || available;
+  // Only a provider actually serving a request lights up. Holding credentials
+  // is not activity: a node that glowed merely because it had keys made the
+  // whole graph look busy when just one provider was routing.
+  const lit = active;
 
   return (
     <div
@@ -176,17 +175,14 @@ function ProviderNode({ data }: { data: ProviderNodeData }): ReactNode {
         gap: isCompact ? "6px" : "9px",
         padding: isCompact ? "6px 10px" : "8px 14px",
         borderRadius: "12px",
-        border: active
-          ? `2px solid ${color}`
-          : available
-          ? `1.5px solid ${color}80`
-          : "1px solid var(--inner-border)",
+        border: active ? `2px solid ${color}` : "1px solid var(--inner-border)",
         background: "var(--surface-1)",
         boxShadow: active
           ? `0 0 20px ${color}55, 0 4px 14px rgba(0,0,0,0.15)`
-          : available
-          ? `0 0 10px ${color}22, 0 2px 8px rgba(0,0,0,0.06)`
           : "0 2px 8px rgba(0,0,0,0.06)",
+        // A provider with no usable credential is dimmed rather than hidden, so
+        // it stays discoverable without competing with the lit node.
+        opacity: available || active ? 1 : 0.6,
         minWidth: isCompact ? "120px" : "155px",
         maxWidth: isCompact ? "180px" : "240px",
         transition: "all 0.25s ease",
@@ -474,7 +470,6 @@ function buildLayout(
     // Dispatchable = holds at least one active credential, needs no credential
     // at all, or is known-configured on a backend that does not report counts.
     const available = accountCount > 0 || availableProviders.has(providerId.toLowerCase());
-    const lit = active || available;
 
     const nodeId = `provider-${providerId}`;
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / count;
@@ -523,11 +518,10 @@ function buildLayout(
       target: nodeId,
       targetHandle,
       animated: false,
-      data: { active: lit, color: meta.color },
+      data: { active, color: meta.color },
       style: {
-        stroke: lit ? meta.color : "var(--inner-border)",
-        strokeWidth: active ? 3 : lit ? 2 : 1.5,
-        opacity: active ? 1 : lit ? 0.75 : 1,
+        stroke: active ? meta.color : "var(--inner-border)",
+        strokeWidth: active ? 3 : 1.5,
       },
     });
   });
