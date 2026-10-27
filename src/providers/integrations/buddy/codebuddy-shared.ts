@@ -6,8 +6,11 @@ import type {
   ProviderId,
 } from "../../provider-registry";
 import { resolveInboundSessionId } from "../../operations/session-resolution";
-import { buildCodeBuddyUserAgent } from "../../operations/client-versions";
 import { buddyConversationHeaders } from "./buddy-conversation-headers";
+import { buddyEnterprise, buddyUserId, resolveBuddyIdentity } from "./buddy-identity";
+import { buildCodeBuddyUserAgent, getCodeBuddyCnVersion, getCodeBuddyVersion } from "../../operations/client-versions";
+import { readBuddyDeviceToken } from "./workbuddy-shared";
+import { buddyCliHeaders, buddyCliTraceHeaders } from "./buddy-cli-headers";
 
 /** Client identity variant behind the per-request CodeBuddy headers. */
 export type CodeBuddyVariant = "IDE" | "CLI";
@@ -16,29 +19,62 @@ export function codebuddyDomain(variant: CodeBuddyVariant): string {
   return variant === "IDE" ? "www.codebuddy.ai" : "copilot.tencent.com";
 }
 
-
 /**
  * Per-request CodeBuddy headers — exact provider contract shared by the
  * international (IDE identity) and CN (CLI identity). The stable conversation
  * header is preserved from the client when available; request IDs rotate.
+ *
+ * `cliIdentity` selects the real CLI contract rather than today's hybrid: the
+ * reference CLI is issued by the OpenAI Node SDK, so it carries no browser
+ * headers and no device token, and it adds the agent envelope. Left unset it
+ * keeps the current behaviour for every provider.
  */
 export async function codebuddyHeaders(
   variant: CodeBuddyVariant,
   context?: ProviderDispatchContext,
   request?: CanonicalRequest,
+  cliIdentity?: boolean,
 ): Promise<Record<string, string>> {
   const identity = variant === "IDE" ? "IDE" : "CLI";
   const ua = buildCodeBuddyUserAgent(identity);
+  const deviceToken = readBuddyDeviceToken(context);
+  const conversationId = resolveInboundSessionId(context, request);
+  const conversation = buddyConversationHeaders({
+    ...(conversationId === undefined ? {} : { conversationId }),
+  });
+  if (resolveBuddyIdentity(context, cliIdentity) === "cli") {
+    return {
+      accept: "application/json",
+      "User-Agent": `CLI/${getCodeBuddyVersion()} CodeBuddy/${getCodeBuddyVersion()}`,
+      "X-Product": "SaaS",
+      "X-IDE-Type": "CLI",
+      "X-IDE-Name": "CLI",
+      "X-IDE-Version": getCodeBuddyVersion(),
+      "X-Domain": codebuddyDomain(variant),
+      "x-requested-with": "XMLHttpRequest",
+      "x-codebuddy-request": "1",
+      "X-Agent-Purpose": "conversation",
+      ...conversation,
+      ...buddyCliTraceHeaders(conversation),
+      ...buddyCliHeaders({
+        userId: buddyUserId(context),
+        enterpriseId: buddyEnterprise(context),
+      }),
+    };
+  }
   return {
     accept: "text/event-stream",
     "User-Agent": ua,
     "X-Product": "SaaS",
     "X-IDE-Type": identity,
     "X-IDE-Name": identity,
+    "X-IDE-Version": identity === "CLI" ? getCodeBuddyCnVersion() : getCodeBuddyVersion(),
     "X-Domain": codebuddyDomain(variant),
     "x-requested-with": "XMLHttpRequest",
     "x-codebuddy-request": "1",
-    ...buddyConversationHeaders({ conversationId: resolveInboundSessionId(context, request) }),
+    "X-Agent-Purpose": "conversation",
+    ...conversation,
+    ...(deviceToken === undefined ? {} : { "X-Device-Token": deviceToken }),
   };
 }
 
@@ -57,11 +93,13 @@ export function codebuddyAdapterConfig(args: {
     candidate: ProviderDispatchTarget,
   ) => void;
   fetchImpl?: typeof fetch;
+  cliIdentity?: boolean;
 }): OpenAICompatibleAdapterConfig {
   return withBearerAuthentication({
     provider_id: args.providerId,
     base_url: args.baseUrl,
-    buildExtraHeaders: (context, request) => codebuddyHeaders(args.variant, context, request),
+    buildExtraHeaders: (context, request) =>
+      codebuddyHeaders(args.variant, context, request, args.cliIdentity),
     prePayload: args.prePayload,
     ...(args.fetchImpl ? { fetchImpl: args.fetchImpl } : {}),
   });

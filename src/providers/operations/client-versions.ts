@@ -365,11 +365,14 @@ export const getKimiCliVersion = accessor("kimiCli").get;
 export const _resetKimiCliVersion = accessor("kimiCli").reset;
 
 export const getCodeBuddyVersion = accessor("codebuddy").get;
+export const getCodeBuddyCnVersion = getCodeBuddyVersion;
 export function buildCodeBuddyUserAgent(
   identity: "IDE" | "CLI",
   version = getCodeBuddyVersion(),
+  cnVersion = getCodeBuddyCnVersion(),
 ): string {
-  return `${identity}/${version} CodeBuddy/${version}`;
+  const resolved = identity === "CLI" ? cnVersion : version;
+  return `${identity}/${resolved} CodeBuddy/${resolved}`;
 }
 
 export const _resetCodeBuddyVersionCache = accessor("codebuddy").reset;

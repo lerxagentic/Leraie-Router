@@ -118,6 +118,80 @@ export function normalizeBuddyToolNames(payload: Record<string, unknown>): void 
 }
 
 
+const BUDDY_ZWSP = "\u200b";
+
+function escapeBuddyRegexLiteral(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buddyTemplateSource(text: string): string {
+  const words = text
+    .split(" ")
+    .map((word) => [...word].map(escapeBuddyRegexLiteral).join(`${BUDDY_ZWSP}*`));
+  return words.join(`[\\s${BUDDY_ZWSP}]+`) + `${BUDDY_ZWSP}*`;
+}
+
+function buddyTemplatePattern(text: string): RegExp {
+  return new RegExp(`(?<!\\w)${buddyTemplateSource(text)}(?!\\w)`, "i");
+}
+
+const DSH_CODING_PATTERN = new RegExp(
+  `(?<!\\w)${buddyTemplateSource("You are a coding agent powered by the")}` +
+    `[\\s${BUDDY_ZWSP}]+([^\\r\\n]{1,200}?)[\\s${BUDDY_ZWSP}]+` +
+    `${buddyTemplateSource("model")}(?!\\w)`,
+  "i",
+);
+const DSH_CHANNEL_IDENTITY_PATTERN = buddyTemplatePattern(
+  "You are an AI agent powered by DeepSeek Harness",
+);
+const DSH_MINIMAL_PATTERN = buddyTemplatePattern("You are a helpful software engineer assistant");
+const DSH_DIRECT_PATTERN = buddyTemplatePattern("You are DeepSeek Harness");
+const DSH_WEB_GUI_PATTERN = buddyTemplatePattern("DeepSeek Harness Web GUI");
+
+const DSH_WORKBUDDY_IDENTITY = "You are WorkBuddy, a powerful AI assistant";
+
+export function scrubBuddyChannelIdentityText(text: string): string {
+  if (!text) return text;
+  const withCodingPersona = text.replace(
+    DSH_CODING_PATTERN,
+    (_match, model: string) =>
+      `${DSH_WORKBUDDY_IDENTITY}. This conversation is powered by the ${model.trim()} model`,
+  );
+  return withCodingPersona
+    .replace(DSH_CHANNEL_IDENTITY_PATTERN, DSH_WORKBUDDY_IDENTITY)
+    .replace(DSH_MINIMAL_PATTERN, DSH_WORKBUDDY_IDENTITY)
+    .replace(DSH_DIRECT_PATTERN, DSH_WORKBUDDY_IDENTITY)
+    .replace(DSH_WEB_GUI_PATTERN, "WorkBuddy Web GUI");
+}
+
+function scrubBuddyMessageText(message: Record<string, unknown>, field: string): void {
+  const value = message[field];
+  if (typeof value === "string") {
+    const scrubbed = scrubBuddyChannelIdentityText(value);
+    if (scrubbed !== value) message[field] = scrubbed;
+    return;
+  }
+  if (!Array.isArray(value)) return;
+  for (const part of value) {
+    if (!isRecord(part)) continue;
+    const text = part["text"];
+    if (typeof text === "string") {
+      const scrubbed = scrubBuddyChannelIdentityText(text);
+      if (scrubbed !== text) part["text"] = scrubbed;
+    }
+  }
+}
+
+export function scrubBuddyChannelIdentity(messages: Array<Record<string, unknown>>): void {
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const role = message["role"];
+    if (role !== "system" && role !== "developer" && role !== "assistant") continue;
+    scrubBuddyMessageText(message, "content");
+    scrubBuddyMessageText(message, "reasoning_content");
+  }
+}
+
 /**
  * Payload prefix shared by the buddy pre-payload hooks: force `stream=true`,
  * apply the provider's DeepSeek thinking contract, opt `reasoning_summary` in
@@ -163,6 +237,7 @@ export function buddyPrePayloadCommon(
     repackBuddyToolResultBlocks(arr);
     cleanupBuddyOrphanToolPairs(arr);
     coalesceConsecutiveAssistantMessages(arr);
+    scrubBuddyChannelIdentity(arr);
   }
   delete payload["agent"];
   delete payload["agent_mode"];

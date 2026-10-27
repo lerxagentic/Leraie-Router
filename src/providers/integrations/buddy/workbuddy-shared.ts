@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 
 import type { OpenAICompatibleAdapterConfig } from "../../compatible-adapter";
 import { withBearerAuthentication } from "../../compatible-adapter";
@@ -15,6 +16,8 @@ import {
   getWorkBuddyCliVersion,
 } from "../../operations/client-versions";
 import { buddyConversationHeaders } from "./buddy-conversation-headers";
+import { buddyCliHeaders, buddyCliTraceHeaders } from "./buddy-cli-headers";
+import { buddyEnterprise, buddyUserId, resolveBuddyIdentity } from "./buddy-identity";
 
 /**
  * WorkBuddy serves chat from a versioned path on a base URL that carries no
@@ -50,45 +53,102 @@ function deriveAccountStableId(accountId: string, purpose: string): string {
 }
 
 /**
+ * Desktop risk token, sent only when the account actually has one.
+ */
+const DEVICE_TOKEN_FILE_MAX_BYTES = 1024;
+const DEVICE_TOKEN_FILE_TTL_MS = 5 * 60_000;
+let deviceTokenFileCache: { readonly value: string | undefined; readonly readAt: number } | undefined;
+
+export function readBuddyDeviceToken(context?: ProviderDispatchContext): string | undefined {
+  const state = context?.credential.auth_state;
+  const value = state?.["deviceToken"] ?? state?.["device_token"];
+  if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  return readDeviceTokenFile();
+}
+
+function readDeviceTokenFile(): string | undefined {
+  const now = Date.now();
+  if (deviceTokenFileCache !== undefined && now - deviceTokenFileCache.readAt < DEVICE_TOKEN_FILE_TTL_MS) {
+    return deviceTokenFileCache.value;
+  }
+  const path = process.env["CARTETHYIA_DEVICE_TOKEN_FILE"] ?? "/app/data/device_token";
+  let value: string | undefined;
+  try {
+    const raw = readFileSync(path);
+    if (raw.byteLength > 0 && raw.byteLength <= DEVICE_TOKEN_FILE_MAX_BYTES) {
+      const text = raw.toString("utf8").trim();
+      if (text.length > 0) value = text;
+    }
+  } catch {
+    value = undefined;
+  }
+  deviceTokenFileCache = { value, readAt: now };
+  return value;
+}
+
+/**
  * Per-request WorkBuddy chat headers — the exact desktop-client contract.
- *
- * The international gateway gates chat on the desktop `User-Agent` (platform
- * brand `WorkBuddy AI`; the wrong brand trips 403 code 11140), plus the
- * `X-CodeBuddy-Request` risk gate and the account-scoped device headers.
- * The background client-version monitor keeps this value fresh; dispatch only
- * reads the cached value and never waits on a version endpoint.
  */
 export async function workbuddyHeaders(
   context?: ProviderDispatchContext,
   request?: CanonicalRequest,
+  domain = WORKBUDDY_DOMAIN,
+  clientVersion = getWorkBuddyClientVersion(),
+  cliIdentity?: boolean,
 ): Promise<Record<string, string>> {
-  const clientVersion = getWorkBuddyClientVersion();
+  const identity = resolveBuddyIdentity(context, cliIdentity);
+  const conversation = buddyConversationHeaders({
+    ...(resolveInboundSessionId(context, request) === undefined
+      ? {}
+      : { conversationId: resolveInboundSessionId(context, request) }),
+    messageIdStyle: identity === "desktop" ? "uuid" : "hex",
+  });
+  const accountId = context?.credential.account_id;
+  if (identity === "cli") {
+    return {
+      accept: "application/json",
+      "user-agent": `CLI/${getWorkBuddyCliVersion()} CodeBuddy/${getWorkBuddyCliVersion()}`,
+      "x-requested-with": "XMLHttpRequest",
+      "x-codebuddy-request": "1",
+      "x-domain": domain,
+      "x-agent-purpose": "conversation",
+      "x-ide-name": "CLI",
+      "x-ide-type": "CLI",
+      "x-ide-version": getWorkBuddyCliVersion(),
+      "x-product": "SaaS",
+      "x-no-enterprise-id": "1",
+      ...conversation,
+      ...buddyCliTraceHeaders(conversation),
+      ...buddyCliHeaders({
+        userId: buddyUserId(context),
+        enterpriseId: buddyEnterprise(context),
+      }),
+    };
+  }
   const headers: Record<string, string> = {
     accept: "application/json, text/event-stream",
     "user-agent": buildWorkBuddyUserAgent(clientVersion, getWorkBuddyCliVersion()),
-    origin: `https://${WORKBUDDY_DOMAIN}`,
-    referer: `https://${WORKBUDDY_DOMAIN}/`,
+    origin: `https://${domain}`,
+    referer: `https://${domain}/`,
     "accept-language": "en-US",
     "x-requested-with": "XMLHttpRequest",
     "x-codebuddy-request": "1",
-    "x-domain": WORKBUDDY_DOMAIN,
+    "x-domain": domain,
     "x-agent-purpose": "conversation",
     "x-ide-name": "WorkBuddy",
     "x-ide-type": "WorkBuddy",
     "x-ide-version": clientVersion,
-    "x-product": "WorkBuddy",
-    // Personal international accounts carry no enterprise id: declare it
-    // explicitly so upstream risk control does not treat the omission as
-    // suspicious.
+    "x-product": "SaaS",
     "x-no-enterprise-id": "1",
-    ...buddyConversationHeaders({ conversationId: resolveInboundSessionId(context, request) }),
   };
-  const accountId = context?.credential.account_id;
+  Object.assign(headers, conversation);
   if (accountId) {
     headers["x-user-id"] = accountId;
     headers["x-machine-id"] = deriveAccountStableId(accountId, "machine");
     headers["x-session-id"] = deriveAccountStableId(accountId, "session");
   }
+  const deviceToken = readBuddyDeviceToken(context);
+  if (deviceToken !== undefined) headers["x-device-token"] = deviceToken;
   return headers;
 }
 
