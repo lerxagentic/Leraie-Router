@@ -25,6 +25,11 @@ import { isProviderCircuitOpen } from "./provider-circuit";
 import { belowUsageFloor, type UsageFloorPolicy } from "./usage-floor";
 import { sharedClaudeSlowLanes } from "../../providers/integrations/claude/claude-slow-lane";
 import type { ProviderQuotaWindow } from "../../providers/quota/quota-contracts";
+import {
+  lookupRouteCandidates,
+  parseModelReference,
+  routeCandidateIndex,
+} from "./candidate-index";
 
 
 /**
@@ -184,18 +189,6 @@ export class RedisAdmissionController implements AdmissionController {
   }
 }
 
-
-function parseModel(model: string): { providerId: string | null; bare: string } {
-  const slash = model.indexOf("/");
-  if (slash === -1) return { providerId: null, bare: model };
-  return { providerId: model.slice(0, slash), bare: model.slice(slash + 1) };
-}
-
-function candidateMatches(candidate: RouteCandidate, model: string): boolean {
-  const parsed = parseModel(model);
-  if (parsed.providerId === null) return candidate.model_id === parsed.bare;
-  return candidate.model_id === parsed.bare && candidate.provider_id === parsed.providerId;
-}
 
 /**
  * Carries a cooling deadline onto a decision only when there is one.
@@ -953,15 +946,14 @@ export class RoutingEngine {
       ? combo.members.flatMap((name) => expandMember(name, new Set([resolved.model])))
       : [resolved.model];
     const modelIds = [...new Set(rawModelIds)];
-    let matching = snapshot.candidates.filter(
-      (candidate) =>
-        modelIds.some((id) => candidateMatches(candidate, id)) &&
-        (candidate.tenant_id == null || candidate.tenant_id === tid),
-    );
+    const candidateIndex = routeCandidateIndex(snapshot);
+    const perId = modelIds.map((id) => ({
+      id,
+      group: lookupRouteCandidates(candidateIndex, parseModelReference(id), tid),
+    }));
+    let matching = perId.flatMap((entry) => entry.group);
     if (combo) {
-      const groups = modelIds
-        .map((id) => matching.filter((c) => candidateMatches(c, id)))
-        .filter((g) => g.length > 0);
+      const groups = perId.map((entry) => entry.group).filter((g) => g.length > 0);
       if (combo.strategy === "round_robin" && groups.length > 1) {
         const heads = groups.map((g) => g[0] as RouteCandidate);
         const rr = this.getRoundRobin(`${tid}::${resolved.model}`);
