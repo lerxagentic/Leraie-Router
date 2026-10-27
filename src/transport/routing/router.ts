@@ -23,6 +23,7 @@ import {
 import { candidateSupportsRequest, type RequiredCapability } from "../translation/capabilities";
 import { isProviderCircuitOpen } from "./provider-circuit";
 import { belowUsageFloor, type UsageFloorPolicy } from "./usage-floor";
+import { sharedClaudeSlowLanes } from "../../providers/integrations/claude/claude-slow-lane";
 import type { ProviderQuotaWindow } from "../../providers/quota/quota-contracts";
 
 
@@ -197,6 +198,72 @@ function candidateMatches(candidate: RouteCandidate, model: string): boolean {
 }
 
 /**
+ * Carries a cooling deadline onto a decision only when there is one.
+ *
+ * A spread rather than a bare field because `exactOptionalPropertyTypes` treats
+ * `cooldown_until: undefined` as a *present* property, which would assert a
+ * deadline exists for a candidate that has none.
+ */
+function spreadDeadline(cooldownUntil: number | undefined): { cooldown_until?: number } {
+  return cooldownUntil === undefined ? {} : { cooldown_until: cooldownUntil };
+}
+
+/**
+ * The earliest instant any excluded candidate recovers, in epoch ms.
+ *
+ * `undefined` when no decision carries a deadline — which is the honest answer
+ * for a set whose exclusions have no reset (`disabled`, `locked`), and keeps
+ * `accountsRateLimitedError` from reporting a number nobody measured. The
+ * minimum, not the maximum: the client can be served as soon as the *first*
+ * account comes back, so quoting the slowest would hold it off longer than it
+ * has to wait.
+ */
+function earliestResetMs(decisions: readonly EligibilityDecision[]): number | undefined {
+  let earliest: number | undefined;
+  for (const decision of decisions) {
+    const until = decision.cooldown_until;
+    if (typeof until !== "number" || !Number.isFinite(until) || until <= Date.now()) continue;
+    if (earliest === undefined || until < earliest) earliest = until;
+  }
+  return earliest;
+}
+
+/**
+ * Stamps the slow lane onto candidates whose account is currently lane-active.
+ *
+ * Read at plan time from the live lane registry, exactly as the usage floor reads
+ * live quota: lane state changes per response, so baking it into the snapshot
+ * would route on a stale observation. An account with no lane state is untouched,
+ * which keeps every non-Claude provider byte-identical here.
+ */
+function applySlowLane(candidates: readonly RouteCandidate[]): readonly RouteCandidate[] {
+  let stamped = false;
+  const out = candidates.map((candidate) => {
+    const accountId = candidate.provider_account_id;
+    if (accountId === undefined || !sharedClaudeSlowLanes.isActive(accountId)) return candidate;
+    stamped = true;
+    return { ...candidate, lane: "slow" as const };
+  });
+  return stamped ? out : candidates;
+}
+
+/**
+ * Strips a trailing `[...]` variant suffix (`claude-opus-5[1m]` →
+ * `claude-opus-5`), leaving everything else untouched.
+ *
+ * This is the part of normalization that is about *spelling*, so it is the part
+ * that must also apply to every hop of an alias chain. `normalizeAliasKey` is the
+ * other part — a lookup convenience that also tries the family slot — and that one
+ * belongs only at the entry point: re-running it per hop makes `claude-opus-5`
+ * fall back to the `opus` alias, which resolves back to `claude-opus-5`, and the
+ * chain reads as a cycle it never was.
+ */
+function stripVariantSuffix(model: string): string {
+  const bracket = model.indexOf("[");
+  return bracket > 0 ? model.slice(0, bracket) : model;
+}
+
+/**
  * Normalizes a requested model name before alias lookup. Coding-agent CLIs
  * version their model ids with variant suffixes (`claude-opus-5[1m]`,
  * effort tags, …) that must never each become a mapping row. Normalization
@@ -207,12 +274,8 @@ function candidateMatches(candidate: RouteCandidate, model: string): boolean {
 function normalizeAliasKey(requested: string, aliasMap: Record<string, string> | undefined): string {
   if (!aliasMap || aliasMap[requested] !== undefined) return requested;
   // 1. Strip a trailing `[...]` variant (`claude-opus-5[1m]` → `claude-opus-5`).
-  let base = requested;
-  const bracket = requested.indexOf("[");
-  if (bracket > 0) {
-    base = requested.slice(0, bracket);
-    if (aliasMap[base] !== undefined) return base;
-  }
+  const base = stripVariantSuffix(requested);
+  if (base !== requested && aliasMap[base] !== undefined) return base;
   // 2. Family-slot fallback: `claude-<slot>-…` resolves through the slot
   // alias (`claude-opus-5` → `opus`, `claude-opus` → `opus`) so a full model
   // id honors the same mapping as the short slot name without per-variant
@@ -287,7 +350,15 @@ function resolveAlias(
     if (target === undefined) break;
     seen.add(current);
     chain.push(current);
-    current = target;
+    // Strip the variant suffix on every hop, not just the first. A target that
+    // is itself a variant id (`fast` → `claude-opus-5[1m]`) must resolve to the
+    // same name the direct spelling would, otherwise one logical model resolves
+    // two different ways depending on how it was reached.
+    //
+    // Only the *spelling* rule applies here. The family-slot fallback does not:
+    // re-running it per hop would send `claude-opus-5` back through the `opus`
+    // alias, which points at `claude-opus-5` — a cycle the operator never wrote.
+    current = stripVariantSuffix(target);
   }
   return { model: current, chain };
 }
@@ -334,11 +405,13 @@ export class EligibilityEvaluator {
     const state = candidate as RouteCandidate & {
       readonly health_status?: string;
       readonly cooldown_kind?: "hard" | "soft";
+      readonly cooldown_until?: number;
       readonly account_locked?: boolean;
       readonly locked?: boolean;
       readonly credit_limit_enabled?: boolean;
       readonly credit_limit?: number;
       readonly last_remaining_credit?: number | null;
+      readonly lane?: "slow";
     };
     if (state.account_locked || state.locked)
       return { eligible: false, reason: "locked", candidate };
@@ -359,13 +432,38 @@ export class EligibilityEvaluator {
     )
       return { eligible: false, reason: "credit_floor_reached", candidate };
     if (state.health_status === "model_cooldown")
-      return { eligible: false, reason: "model_cooldown", candidate };
+      return {
+        eligible: false,
+        reason: "model_cooldown",
+        candidate,
+        ...spreadDeadline(state.cooldown_until),
+      };
     if (state.health_status === "credit_floor_reached")
       return { eligible: false, reason: "credit_floor_reached", candidate };
     if (state.health_status === "cooldown" && state.cooldown_kind === "hard")
-      return { eligible: false, reason: "cooldown_hard", candidate };
+      return {
+        eligible: false,
+        reason: "cooldown_hard",
+        candidate,
+        ...spreadDeadline(state.cooldown_until),
+      };
+    // A slow lane is orthogonal to cooldown, never a member of it: the account
+    // still serves on spare capacity when the request carries the slow usage
+    // limit, so excluding it would park a serving credential. It stays eligible
+    // and only orders behind fresh siblings (see the ordering in `plan()`).
+    //
+    // Deliberately AFTER the floor gates: orthogonal means it adds no exclusion,
+    // not that it overrides one. An account with no usable allowance is not
+    // rescued by the lane — the lane is a latency budget against spare capacity,
+    // and an account below its floor has none.
+    if (state.lane === "slow") return { eligible: true, reason: "slow", candidate };
     if (state.health_status === "cooldown")
-      return { eligible: true, reason: "cooldown", candidate };
+      return {
+        eligible: true,
+        reason: "cooldown",
+        candidate,
+        ...spreadDeadline(state.cooldown_until),
+      };
     return { eligible: true, reason: "healthy", candidate };
   }
 
@@ -515,6 +613,41 @@ export class RoutingEngine {
     return snapshot ? new Map(snapshot) : new Map();
   }
 
+  /**
+   * Which candidates are already at their concurrency ceiling.
+   *
+   * The admission controller already holds these counters and will refuse the
+   * account the moment it is asked; reading them here lets the plan *order* use
+   * the same fact, so the first attempt goes to an account with room instead of
+   * to one that is certain to answer 429. Without this the caller paid a
+   * round-trip to be told something the gateway already knew from its own
+   * counters.
+   *
+   * A counter read is a snapshot, so it can be a little stale — a slot freed
+   * between here and `admit()` only costs a retry, which is the behaviour
+   * anyway. A candidate with no configured ceiling is never saturated: admission
+   * treats it as unlimited. A failed read never fails routing, because the
+   * admission attempt itself is the real gate and this only optimizes order.
+   */
+  private async saturatedCandidates(
+    candidates: readonly RouteCandidate[],
+  ): Promise<ReadonlySet<RouteCandidate>> {
+    const bounded = candidates.filter(
+      (candidate) => typeof candidate.max_inflight === "number" && candidate.max_inflight > 0,
+    );
+    if (bounded.length === 0) return new Set();
+    const snapshot = await this.accountInflightSnapshot().catch(() => new Map<string, number>());
+    if (snapshot.size === 0) return new Set();
+    const saturated = new Set<RouteCandidate>();
+    for (const candidate of bounded) {
+      const limit = candidate.max_inflight;
+      if (limit === undefined) continue;
+      const inflight = snapshot.get(admissionKey(candidate));
+      if (inflight !== undefined && inflight >= limit) saturated.add(candidate);
+    }
+    return saturated;
+  }
+
   private resolveProviderRouting(
     snapshot: RouteSnapshot,
     providerId: string,
@@ -601,13 +734,21 @@ export class RoutingEngine {
     // `matching` non-empty but nothing eligible means every account serving
     // this model is currently unusable — NOT a missing model. Distinct from
     // the `matching.length === 0` throw in the resolver, which is a genuine 404.
-    const decisions = matching.map((candidate) => this.eligibility.evaluate(candidate));
+    //
+    // The slow lane is stamped first: it is a property of the account's live
+    // upstream state, not of the snapshot, so it has to be read here and the
+    // evaluator has to see it to report `slow` instead of `healthy`.
+    const laned = applySlowLane(matching);
+    const decisions = laned.map((candidate) => this.eligibility.evaluate(candidate));
     let eligible = decisions.filter((d) => d.eligible).map((d) => d.candidate);
     // Usage floor: an account whose remaining allowance is at or below its
     // provider's floor is dropped here, before ordering, so the request fails
     // over to a sibling instead of spending the balance the operator kept back.
-    // Reads the same cached quota windows the console shows.
-    if (this.quotaWindowsFor !== undefined && eligible.length > 0) {
+    // Reads the same cached quota windows the console shows, and also honours a
+    // `quota_windows` reading already carried on the candidate — the snapshot
+    // does not attach one today, but a caller that did would otherwise have its
+    // own measurement silently ignored just because no injector was wired.
+    if (eligible.length > 0) {
       const floors = await Promise.all(
         eligible.map(async (candidate) => {
           const accountId = candidate.provider_account_id;
@@ -629,9 +770,21 @@ export class RoutingEngine {
       if (aboveFloor.length > 0) eligible = aboveFloor;
     }
     if (eligible.length === 0) {
-      const hardCooling = decisions.some((d) => d.reason === "cooldown_hard");
-      if (hardCooling) {
-        throw accountsRateLimitedError(requestedModel, resolved.model);
+      // A time-bounded exclusion answers 429, not 503. Both reasons here carry a
+      // deadline the upstream itself stated, so the request is not "unavailable"
+      // — it is "not until the reset", and the client is owed an answer it can
+      // retry against. Answering 503 told the client the model was down when
+      // every account serving it was merely resting, and 503 invites a client to
+      // give up or fail a health check, where 429 says retry later.
+      const rateLimited = decisions.some(
+        (d) => d.reason === "cooldown_hard" || d.reason === "model_cooldown",
+      );
+      if (rateLimited) {
+        throw accountsRateLimitedError(
+          requestedModel,
+          resolved.model,
+          earliestResetMs(decisions),
+        );
       }
       throw accountsUnavailableError(
         requestedModel,
@@ -646,28 +799,58 @@ export class RoutingEngine {
     // the gateway "still hit a cooled-down account" instead of answering the
     // client honestly. Answer 429 (rate limited) so the client retries after
     // the reset rather than 503 capacity that is merely resting.
+    //
+    // A slow-lane account still serves on spare capacity, so it counts as
+    // servable: an all-slow pool must plan and dial rather than answer 429 while
+    // capacity sits idle.
     const healthyCount = decisions.filter(
-      (d) => d.eligible && d.reason !== "cooldown",
+      (d) => d.eligible && (d.reason === "healthy" || d.reason === "slow"),
     ).length;
     if (healthyCount === 0) {
-      throw accountsRateLimitedError(requestedModel, resolved.model);
+      throw accountsRateLimitedError(
+        requestedModel,
+        resolved.model,
+        earliestResetMs(decisions),
+      );
     }
-    // Cooling accounts are eligible but tried last: a healthy candidate that
-    // can serve the request must win, while a deployment whose only account is
-    // cooling still routes instead of failing. Sorted on the evaluator's reason
-    // so the ordering and the eligibility rule cannot disagree about which
-    // candidates are cooling.
+    // One ordering, applied before AND after the provider rotation.
+    //
+    // The partitions are, in attempt order: fresh → slow → cooling →
+    // saturated. Each is a *deprioritization*, never an exclusion, so a
+    // deployment whose every account is in the same state still plans and dials
+    // instead of reading as "no account available".
+    //
+    // Applied twice on purpose. `applyProviderRouting` rotates accounts within
+    // one `provider::model` run and that rotation is blind to health by design,
+    // so it can float any of these back to the front. Re-asserting only the
+    // partition the author remembered is how the slow and saturated rules were
+    // silently undone; deriving every partition once and replaying all of them
+    // is what keeps the rule true regardless of the operator's strategy.
+    const slow = new Set(
+      decisions
+        .filter((decision) => decision.eligible && decision.reason === "slow")
+        .map((decision) => decision.candidate),
+    );
     const cooling = new Set(
       decisions
         .filter((decision) => decision.eligible && decision.reason === "cooldown")
         .map((decision) => decision.candidate),
     );
-    if (cooling.size > 0 && cooling.size < eligible.length) {
-      eligible = [
-        ...eligible.filter((candidate) => !cooling.has(candidate)),
-        ...eligible.filter((candidate) => cooling.has(candidate)),
-      ];
-    }
+    const saturated = await this.saturatedCandidates(eligible);
+    const orderEligible = (candidates: readonly RouteCandidate[]): RouteCandidate[] => {
+      // Stable partition: filtering preserves the incoming order inside each
+      // group, which is what keeps the rotation's own ordering intact.
+      const fresh = candidates.filter(
+        (candidate) => !slow.has(candidate) && !cooling.has(candidate) && !saturated.has(candidate),
+      );
+      const lanedOnly = candidates.filter((candidate) => slow.has(candidate) && !cooling.has(candidate));
+      const coolingOnly = candidates.filter(
+        (candidate) => cooling.has(candidate) && !saturated.has(candidate),
+      );
+      const saturatedOnly = candidates.filter((candidate) => saturated.has(candidate));
+      return [...fresh, ...lanedOnly, ...coolingOnly, ...saturatedOnly];
+    };
+    eligible = orderEligible(eligible);
     // Capability-aware routing: filter against snapshot capability profiles
     // (shared predicate with the planner). Empty here means no candidate
     // supports the variant — the planner catches this code and re-plans a
@@ -686,11 +869,11 @@ export class RoutingEngine {
     }
     eligible = this.applyProviderRouting(eligible, snapshot, tid);
     // Per-provider breaker: a provider whose circuit is open is tried after
-    // every provider that is not. This is the same shape as the cooling rule
-    // above and for the same reason — deprioritized, never excluded, so a
-    // deployment whose only provider is mid-outage still serves rather than
-    // failing outright. Placed after `applyProviderRouting` for the same
-    // rotation-blindness reason the cooling re-assert handles.
+    // every provider that is not. Same shape as the cooling rule above and for
+    // the same reason — deprioritized, never excluded, so a deployment whose
+    // only provider is mid-outage still serves rather than failing outright.
+    // Placed after `applyProviderRouting` for the same rotation-blindness
+    // reason the ordering re-assert below handles.
     const tripped = new Set(
       eligible.filter((candidate) => isProviderCircuitOpen(candidate.provider_id)).map((c) => c.provider_id),
     );
@@ -700,18 +883,8 @@ export class RoutingEngine {
         ...eligible.filter((candidate) => tripped.has(candidate.provider_id)),
       ];
     }
-    // Re-assert the cooling order: `applyProviderRouting` rotates accounts
-    // within one `provider::model` run, and that rotation is by design blind to
-    // health — so it can float a cooling account back to the front and undo the
-    // deprioritization above. Sorting again here is what makes the cooling rule
-    // hold regardless of the operator's rotation strategy. A stable partition
-    // keeps the rotation's own ordering inside each group.
-    if (cooling.size > 0 && cooling.size < eligible.length) {
-      eligible = [
-        ...eligible.filter((candidate) => !cooling.has(candidate)),
-        ...eligible.filter((candidate) => cooling.has(candidate)),
-      ];
-    }
+    // Replay the whole ordering, not just the cooling partition.
+    eligible = orderEligible(eligible);
     const chosen = eligible[0]!;
     return {
       revision: snapshot.revision,
@@ -790,6 +963,12 @@ export class RoutingEngine {
       } else {
         matching = groups.flat();
       }
+      // Re-dedupe after the group flatten. `modelIds` is already unique, but two
+      // members can still resolve to the *same* candidate — a combo listing
+      // `p/m` and `m` hits one candidate twice — and the plan must not dial it
+      // twice. Deduping before this block (on `modelIds`) does not cover it,
+      // because the duplication appears in the candidate list, not the id list.
+      matching = [...new Set(matching)];
     }
     if (matching.length === 0) throw modelNotFoundError(requestedModel, modelIds);
     const owners = [...new Set(matching.map((candidate) => candidate.provider_id))];

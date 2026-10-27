@@ -73,6 +73,8 @@ export function cliMappingSourceKeys(toolId: string, sourceModel: string): reado
 type RouteCandidateWithHealth = RouteCandidate & {
   health_status?: "cooldown" | "model_cooldown" | "credit_floor_reached" | "disabled";
   cooldown_kind?: "hard" | "soft";
+  /** Epoch-ms recovery instant for a timed cooldown, when the upstream stated one. */
+  cooldown_until?: number;
 };
 
 const HARD_COOLDOWN_CATEGORIES: Readonly<Record<string, true>> = {
@@ -644,6 +646,10 @@ class RouteCatalogRepository {
             candidate.cooldown_kind = hardCooldownCategory(account.lastErrorCategory)
               ? "hard"
               : "soft";
+            // Carry the deadline so `plan()` can quote a real `retry-after`
+            // instead of the one-second floor a bare 429 falls back to. Only set
+            // when it is still in the future, matching the guard above.
+            candidate.cooldown_until = account.cooldownUntil.getTime();
           }
         }
 

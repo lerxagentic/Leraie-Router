@@ -83,6 +83,45 @@ describe("usage floor", () => {
     ).toBe(false);
   });
 
+  test("percent mode reads a utilization-only window that states no absolute numbers", () => {
+    // The OAuth rate-limit shape: `remainingPercent` and nothing else. Before
+    // this fallback the floor was silently inert for every such provider —
+    // `pooledRemainingPercent` returns null without an absolute limit, and the
+    // old code treated that null as "cannot judge" rather than "read the percent".
+    const utilizationOnly = [
+      window({ accounting: "pooled", usedPercent: 100, remainingPercent: 0 }),
+    ];
+    expect(belowUsageFloor({ floor: 10, unit: "percent" }, utilizationOnly)).toBe(true);
+    expect(belowUsageFloor({ floor: 0, unit: "percent" }, utilizationOnly)).toBe(true);
+  });
+
+  test("the utilization fallback takes the lowest pooled window", () => {
+    // A floor promises an allowance is kept back, so the window closest to empty
+    // is the one that decides.
+    const windows = [
+      window({ accounting: "pooled", remainingPercent: 80 }),
+      window({ accounting: "pooled", remainingPercent: 5 }),
+    ];
+    expect(belowUsageFloor({ floor: 10, unit: "percent" }, windows)).toBe(true);
+    expect(belowUsageFloor({ floor: 4, unit: "percent" }, windows)).toBe(false);
+  });
+
+  test("the utilization fallback still ignores independent windows", () => {
+    // An exhausted independent window is its own budget; the pooled-only rule
+    // above must not be undone by the new fallback.
+    const windows = [window({ accounting: "independent", remainingPercent: 0 })];
+    expect(belowUsageFloor({ floor: 50, unit: "percent" }, windows)).toBe(false);
+  });
+
+  test("an absolute pooled balance outranks the reported percent", () => {
+    // Both readings present and disagreeing: the absolute one is derived from the
+    // same numbers the credit mode uses, so it stays authoritative.
+    const windows = [
+      window({ accounting: "pooled", remaining: 10, limit: 100, remainingPercent: 90 }),
+    ];
+    expect(belowUsageFloor({ floor: 20, unit: "percent" }, windows)).toBe(true);
+  });
+
   test("resolveUsageFloor prefers the tenant row over the global row", () => {
     expect(
       resolveUsageFloor(

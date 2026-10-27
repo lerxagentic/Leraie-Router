@@ -61,6 +61,16 @@ export function resolveUsageFloor(
  * or no pooled balance at all — so enabling the feature can only ever *skip* an
  * account the operator explicitly asked to keep back, never fail a request that
  * used to succeed.
+ *
+ * Percent mode has two readings, and must try both. A credit-pack provider
+ * reports absolute `limit`/`used`, which `pooledRemainingPercent` turns into a
+ * percentage. A utilization-only provider (the usual OAuth rate-limit surface:
+ * a 5-hour or weekly window) reports `remainingPercent` and no absolute numbers
+ * at all, so the absolute reading is `null`. Consulting only the absolute one
+ * left the floor silently inert for every such provider — the setting saved, the
+ * panel showed it, and routing never applied it. The fallback takes the *lowest*
+ * pooled `remainingPercent`: a floor is a promise that the account keeps an
+ * allowance back, so the window closest to empty is the one that decides.
  */
 export function belowUsageFloor(
   policy: UsageFloorPolicy | undefined,
@@ -68,8 +78,37 @@ export function belowUsageFloor(
 ): boolean {
   if (policy === undefined || policy.floor === null) return false;
   if (windows === undefined || windows.length === 0) return false;
-  const remaining =
-    policy.unit === "credit" ? pooledRemainingCredit(windows) : pooledRemainingPercent(windows);
-  if (remaining === null) return false;
-  return remaining <= policy.floor;
+  if (policy.unit === "credit") {
+    const remaining = pooledRemainingCredit(windows);
+    if (remaining === null) return false;
+    return remaining <= policy.floor;
+  }
+  const absolute = pooledRemainingPercent(windows);
+  if (absolute !== null) return absolute <= policy.floor;
+  const reported = lowestPooledRemainingPercent(windows);
+  if (reported === null) return false;
+  return reported <= policy.floor;
+}
+
+/**
+ * The lowest `remainingPercent` any pooled window reports, or `null` when none
+ * states one.
+ *
+ * Only pooled windows count, for the reason this file's header gives: an
+ * exhausted independent window is its own budget and does not mean the account
+ * cannot serve. Within pooled windows the minimum is the conservative reading —
+ * an operator setting a floor is asking for the balance to be preserved, and the
+ * window nearest exhaustion is the one that will refuse first.
+ */
+function lowestPooledRemainingPercent(
+  windows: readonly ProviderQuotaWindow[],
+): number | null {
+  let lowest: number | null = null;
+  for (const window of windows) {
+    if (window.accounting !== "pooled") continue;
+    const percent = window.remainingPercent;
+    if (typeof percent !== "number" || !Number.isFinite(percent)) continue;
+    if (lowest === null || percent < lowest) lowest = percent;
+  }
+  return lowest;
 }
