@@ -144,6 +144,12 @@ export function createAnthropicAdapter(fetchImpl?: typeof fetch): ProviderAdapte
   });
 }
 
+export function createDeepseekAnthropicAdapter(): ProviderAdapter {
+  return new AnthropicApiKeyAdapter({
+    base_url: providerBaseUrl("deepseek").replace(/\/+$/, "") + "/anthropic",
+  });
+}
+
 import { defineModel } from "../model-definition";
 
 export const ANTHROPIC_MODELS: readonly ModelDefinition[] = [

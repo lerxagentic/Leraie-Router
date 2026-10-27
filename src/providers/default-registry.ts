@@ -43,9 +43,11 @@ type ProviderModuleCapabilities = Partial<Omit<ProviderModule, "loadAdapter">> &
 
 function configuredProvider(
   providerId: keyof typeof GENERIC_API_KEY_SPECS,
+  loadModels?: ProviderModuleCapabilities["loadModels"],
 ): ProviderModuleCapabilities {
   return {
     loadAdapter: async () => createApiKeyAdapter(GENERIC_API_KEY_SPECS[providerId]),
+    ...(loadModels === undefined ? {} : { loadModels }),
   };
 }
 
@@ -219,14 +221,16 @@ export const PROVIDER_CAPABILITIES = {
     loadQuotaCollector: quotaCapability(() => import("./integrations/cerebras"), "fetchCerebrasQuota"),
     loadModelDiscovery: openAIModelDiscovery("cerebras", { headers: (credential) => ({ authorization: `Bearer ${credential}` }) }),
   },
-  mistral: configuredProvider("mistral"),
+  mistral: configuredProvider(
+    "mistral",
+    async () => (await import("./integrations/mistral")).MISTRAL_MODELS,
+  ),
   fireworks: configuredProvider("fireworks"),
   nvidia: configuredProvider("nvidia"),
   deepseek: {
-    ...configuredProvider("deepseek"),
-    // The host serves a standard `/v1/models`, verified live, so the shared
-    // fetcher reads it as-is and the base catalog supplies limits and pricing
-    // for the ids it already files under `deepseek`.
+    endpointPathsByWireFamily: { messages: "/v1/messages" },
+    loadAdapter: async () => (await import("./integrations/anthropic")).createDeepseekAnthropicAdapter(),
+    loadModels: async () => (await import("./integrations/deepseek")).DEEPSEEK_MODELS,
     loadModelDiscovery: openAIModelDiscovery("deepseek", {
       headers: (credential) => ({ authorization: `Bearer ${credential}` }),
     }),
