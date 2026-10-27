@@ -38,9 +38,18 @@ import type {
 } from "../../provider-registry";
 import {
   createCodexIdentity,
+  getCodexAccountId,
   getCodexInstallId,
   getCodexResidency,
 } from "./codex-identity";
+import { buildCodexUserAgent } from "../../operations/cli-platform";
+import {
+  boundedUpstreamArray,
+  boundedUpstreamNumber,
+  sanitizeUpstreamLabel,
+} from "../../provider-metadata";
+import { isRecord } from "../../../protocol/primitives";
+import type { FetchLike } from "../../quota/quota-contracts";
 import { mapCodexErrorResponse } from "./codex-errors";
 import { canonicalToCodexResponsesPayload } from "../../../protocol/request/codex";
 import {
@@ -676,4 +685,96 @@ export function createCodexAdapter(
       }
     },
   };
+}
+
+const CODEX_MODELS_PATHS = ["/backend-api/codex/models", "/backend-api/models"] as const;
+const CODEX_MODELS_PATH = CODEX_MODELS_PATHS[0];
+const CODEX_CLIENT_VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
+
+export function buildCodexModelsUrl(
+  baseUrl: string,
+  path: string = CODEX_MODELS_PATH,
+  clientVersion = getCodexVersion(),
+): string {
+  const root = baseUrl.replace(/\/+$/, "");
+  const url = `${root}${path}`;
+  const version = clientVersion.trim();
+  if (!CODEX_CLIENT_VERSION_PATTERN.test(version)) return url;
+  return `${url}?client_version=${encodeURIComponent(version)}`;
+}
+
+const DEFAULT_CODEX_DISCOVERY_CONTEXT_LIMIT = 272_000;
+const DEFAULT_CODEX_DISCOVERY_OUTPUT_LIMIT = 128_000;
+
+export async function discoverCodexModels(input: {
+  readonly credential: string;
+  readonly baseUrl?: string;
+  readonly signal?: AbortSignal;
+  readonly fetcher?: FetchLike;
+}): Promise<readonly ModelDefinition[] | null> {
+  const token = input.credential.trim();
+  if (token.length === 0) return null;
+  const accountId = getCodexAccountId(token);
+  const residency = getCodexResidency({ accessToken: token });
+  const version = getCodexVersion();
+  const headers: Record<string, string> = {
+    accept: "application/json",
+    authorization: `Bearer ${token}`,
+    "user-agent": buildCodexUserAgent(version),
+    originator: "codex_cli_rs",
+    version,
+    "OpenAI-Beta": "responses=experimental",
+    ...(accountId === undefined || accountId.length === 0 ? {} : { "chatgpt-account-id": accountId }),
+    ...(residency === undefined || residency.length === 0
+      ? {}
+      : { "x-openai-internal-codex-residency": residency }),
+  };
+  const fetcher = input.fetcher ?? globalThis.fetch;
+  const root = input.baseUrl ?? DEFAULT_CHATGPT_BASE_URL;
+  let entries: readonly unknown[] | undefined;
+  try {
+    for (const path of CODEX_MODELS_PATHS) {
+      let response: Response;
+      try {
+        response = await fetcher(buildCodexModelsUrl(root, path, version), {
+          method: "GET",
+          headers,
+          ...(input.signal === undefined ? {} : { signal: input.signal }),
+        });
+      } catch {
+        continue;
+      }
+      if (!response.ok) continue;
+      let payload: unknown;
+      try {
+        payload = (await response.json()) as unknown;
+      } catch {
+        continue;
+      }
+      const found = boundedUpstreamArray(isRecord(payload) ? payload["models"] : undefined);
+      if (found === undefined) continue;
+      entries = found;
+      break;
+    }
+  } catch {
+    return null;
+  }
+  if (entries === undefined) return null;
+  const byId = new Map<string, ModelDefinition>();
+  for (const entry of entries) {
+    if (!isRecord(entry)) continue;
+    const id = sanitizeUpstreamLabel(entry["slug"] ?? entry["id"]);
+    if (id === undefined) continue;
+    const contextLimit = boundedUpstreamNumber(entry["context_window"], { min: 1, max: 1_000_000_000 });
+    const outputLimit = boundedUpstreamNumber(entry["max_output_tokens"], { min: 1, max: 1_000_000_000 });
+    byId.set(
+      id,
+      codexResponsesModel(
+        id,
+        contextLimit ?? DEFAULT_CODEX_DISCOVERY_CONTEXT_LIMIT,
+        outputLimit ?? DEFAULT_CODEX_DISCOVERY_OUTPUT_LIMIT,
+      ),
+    );
+  }
+  return [...byId.values()].sort((a, b) => a.modelId.localeCompare(b.modelId));
 }
