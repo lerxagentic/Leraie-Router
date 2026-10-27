@@ -27,6 +27,7 @@ import { createNetworkPoolRoutes } from "./routing/pools/routes";
 import { DrizzleModelRoutingStore } from "./routing/model/store";
 import { DrizzleNetworkPoolStore } from "./routing/pools/store";
 import { createRuntimeSettingsRoutes } from "./settings/contracts";
+import { createDataManagementRoutes } from "./data-management/routes";
 import { DrizzleRuntimeSettingsStore } from "./settings/store";
 import { createObservabilityRoutes } from "./observability/contracts";
 import { DrizzleObservabilityStore } from "./observability/store";
@@ -305,6 +306,14 @@ export function registerConsoleDomains(
     relayFetch: createValidatedFetch({ policy: resolveSsrfPolicy() }),
   }));
   console.use(createRuntimeSettingsRoutes({ store: runtimeSettingsStore, accessResolver: ctx.accessResolver, auditSink: ctx.auditRecorder }));
+  console.use(createDataManagementRoutes({
+    telemetryDir: process.env.CARTETHYIA_TELEMETRY_DIR?.trim() || "./data/telemetry",
+    retentionDays: 30,
+    payloadRetentionMs: async () => Number(process.env.CARTETHYIA_TELEMETRY_PAYLOAD_RETENTION_MS ?? 15 * 60_000),
+    accessResolver: ctx.accessResolver,
+    auditSink: ctx.auditRecorder,
+    flusher: ctx.telemetryBuffer,
+  }));
   console.use(
     createBackupRoutes({
       accessResolver: ctx.accessResolver,

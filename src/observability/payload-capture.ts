@@ -39,10 +39,16 @@ export interface StoredPayload {
   signals: PayloadSignals;
 }
 
+export const MAX_PAYLOAD_RETENTION_MS = 7 * 24 * 60 * 60_000;
+
 function payloadRetentionMs(): number {
   const raw = Number(process.env.CARTETHYIA_TELEMETRY_PAYLOAD_RETENTION_MS ?? 15 * 60_000);
-  if (!Number.isFinite(raw) || raw < 1_000 || raw > 7 * 24 * 60 * 60_000) return 15 * 60_000;
+  if (!Number.isFinite(raw) || raw < 1_000 || raw > MAX_PAYLOAD_RETENTION_MS) return 15 * 60_000;
   return Math.floor(raw);
+}
+
+export function payloadPruneBound(now: Date): Date {
+  return new Date(now.getTime() - MAX_PAYLOAD_RETENTION_MS);
 }
 function isCaptureAllowed(input: PayloadCaptureInput): boolean {
   // Exactly one opt-in must be set, and it must be the one `scope` names:

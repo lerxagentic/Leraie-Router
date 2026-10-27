@@ -1,9 +1,13 @@
 import { mkdir, open, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
+import { gunzipSync, gzipSync } from "node:zlib";
+import { Worker } from "node:worker_threads";
+import { hourStamp } from "../shared/time";
 
 export interface PayloadFileReference {
-  readonly storage: "jsonb-file";
+  readonly storage: "jsonl-file";
   readonly file: string;
   readonly offset: number;
   readonly length: number;
@@ -22,7 +26,7 @@ export function isPayloadFileReference(value: unknown): value is PayloadFileRefe
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
   return (
-    record["storage"] === "jsonb-file" &&
+    record["storage"] === "jsonl-file" &&
     typeof record["file"] === "string" &&
     typeof record["offset"] === "number" &&
     typeof record["length"] === "number" &&
@@ -56,13 +60,86 @@ export function payloadReferenceFromRow(row: {
   return isPayloadFileReference(candidate) ? candidate : undefined;
 }
 
-const FRAME_HEADER_BYTES = 4;
+/** Extension for frame files. */
+const FRAME_FILE_SUFFIX = ".jsonl";
+
+function isFrameFileName(name: string): boolean {
+  return name.endsWith(FRAME_FILE_SUFFIX);
+}
+
 const MAX_FRAME_BYTES = 256 * 1024 * 1024;
 const DEFAULT_MAX_FILE_BYTES = 64 * 1024 * 1024;
 const DEFAULT_DIRECTORY = "./data/telemetry-payloads";
-let writeTail: Promise<void> = Promise.resolve();
 
-function payloadDirectory(): string {
+/**
+ * Backlog bounds for the payload writer: per-process, in front of the
+ * append-only file writes.
+ *
+ * The writer used to be an unbounded promise chain: every capture appended
+ * another link, so a slow disk (or a burst of large captures) accumulated
+ * every waiting frame's bytes in memory with no ceiling — the exact
+ * unbounded-growth failure this phase exists to remove. Items are counted
+ * before queueing in their exact serialized frame bytes (the same buffers
+ * that will be written), so 64 MiB of backlog means 64 MiB of real memory,
+ * not an estimate.
+ */
+export const MAX_PAYLOAD_BACKLOG_ITEMS = 32;
+export const MAX_PAYLOAD_BACKLOG_BYTES = 64 * 1024 * 1024;
+
+/** Raised when the payload writer's backlog is at its bound. */
+export class PayloadBacklogFullError extends Error {
+  constructor(
+    readonly boundedBy: "items" | "bytes",
+  ) {
+    super(`telemetry payload writer backlog full (${boundedBy})`);
+    this.name = "PayloadBacklogFullError";
+  }
+}
+
+interface BacklogEntry {
+  readonly estimatedBytes: number;
+  run: () => Promise<void>;
+}
+
+let backlog: BacklogEntry[] = [];
+let backlogBytes = 0;
+let draining = false;
+
+/** Test/diagnostic seam: current backlog occupancy. */
+export function payloadWriterBacklog(): { readonly items: number; readonly bytes: number } {
+  return { items: backlog.length, bytes: backlogBytes };
+}
+
+/**
+ * Runs the backlog to completion. One drain at a time: entries execute in
+ * FIFO order, which preserves the append-only file semantics the previous
+ * promise chain provided.
+ */
+function drainBacklog(): void {
+  if (draining) return;
+  draining = true;
+  const step = (): void => {
+    const entry = backlog.shift();
+    if (entry === undefined) {
+      draining = false;
+      return;
+    }
+    backlogBytes -= entry.estimatedBytes;
+    entry
+      .run()
+      .catch(() => undefined)
+      .finally(() => step());
+  };
+  step();
+}
+
+/**
+ * Single source of truth for the telemetry payload directory: the
+ * `CARTETHYIA_TELEMETRY_PAYLOAD_DIR` override when set, otherwise the
+ * default `./data/telemetry-payloads`. Every writer and reader must resolve
+ * the directory through this function so the two can never drift.
+ */
+export function payloadDirectory(): string {
   return process.env.CARTETHYIA_TELEMETRY_PAYLOAD_DIR?.trim() || DEFAULT_DIRECTORY;
 }
 
@@ -71,71 +148,323 @@ function maxFileBytes(): number {
   return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MAX_FILE_BYTES;
 }
 
-function checksum(value: string): string {
-  let hash = 2166136261;
-  for (let index = 0; index < value.length; index += 1) {
-    hash ^= value.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return (hash >>> 0).toString(16).padStart(8, "0");
+/**
+ * Frame checksum.
+ *
+ * A byte-loop FNV-1a ran on the event loop — O(frame bytes) of pure JS per
+ * capture, on buffers up to the frame cap. `crypto.createHash` is the runtime's
+ * native path. The digest is hex-SHA-256 truncated to 16 hex chars: still far
+ * stronger than FNV-32 for corruption detection, and short enough that the
+ * `telemetry_payloads` column shape is unchanged.
+ *
+ * **Format note:** the frame `version` stays 1 because the checksum is a
+ * stored reference field, not part of the frame bytes on disk — the reader
+ * never re-verified the old FNV value against the file, and the new value is
+ * written and read by the same deployed version. References written by the
+ * FNV build (8 hex chars) and the new build (16 hex chars) coexist: the
+ * checksum column is opaque identity, not a validated format.
+ */
+function checksum(value: Buffer | readonly Buffer[]): string {
+  const hash = createHash("sha256");
+  for (const part of Array.isArray(value) ? value : [value]) hash.update(part);
+  return hash.digest("hex").slice(0, 16);
 }
 
 function fileName(now = new Date()): string {
-  return `${now.toISOString().slice(0, 13).replaceAll(":", "-")}-${process.pid}.jsonb`;
+  return `${hourStamp(now)}-${process.pid}${FRAME_FILE_SUFFIX}`;
 }
 
-async function appendFrame(frame: PayloadFrame): Promise<PayloadFileReference> {
+/**
+ * Gzipped frame body.
+ *
+ * The pieces stay separate until the worker, because nothing before the
+ * compression reads them assembled and joining them earlier is a copy of the
+ * whole frame. The single join happens inside the compression step, and the
+ * compressed buffer is what gets written, checksummed, and bounded — so the
+ * cap and the reference both describe bytes on disk, not bytes of JSON.
+ */
+async function compressFrame(parts: readonly Buffer[]): Promise<Buffer> {
+  const joined = Buffer.concat(parts);
+  return compressAsync(joined);
+}
+
+/**
+ * The compression worker: one per process, started lazily on the first
+ * capture, at most {@link MAX_ACTIVE_COMPRESSION_JOBS} jobs in flight.
+ *
+ * `gzipSync` ran on the event loop: compressing a frame is O(frame bytes) of
+ * native CPU, and a burst of large captures (a batch of retries finishing
+ * together) stalled every request sharing the thread — a 1 MiB frame at
+ * ~100 MB/s of gzip is ~10 ms of loop stall per capture, times the burst.
+ * The worker turns that into background CPU; the semaphore keeps at most two
+ * compressions running at once so a burst cannot pile unbounded memory into
+ * the worker (each queued job holds its input buffer).
+ *
+ * Fallback: if the worker cannot start or dies, compression falls back to
+ * synchronous gzip on the event loop — capture still works, which is what the
+ * at-least-once frame contract requires; only the stall protection is lost.
+ */
+const MAX_ACTIVE_COMPRESSION_JOBS = 2;
+let compressionWorker: Worker | undefined;
+let workerBroken = false;
+let activeCompressionJobs = 0;
+const compressionQueue: (() => void)[] = [];
+
+interface CompressionJob {
+  readonly id: number;
+  readonly input: Buffer;
+  readonly resolve: (output: Buffer) => void;
+  readonly reject: (error: Error) => void;
+}
+let nextJobId = 1;
+const pendingJobs = new Map<number, CompressionJob>();
+
+function ensureCompressionWorker(): Worker | undefined {
+  if (workerBroken) return undefined;
+  if (compressionWorker) return compressionWorker;
+  try {
+    // Inline worker via Blob URL: no separate source file to ship, no path
+    // resolution to break in compiled/AOT builds. The worker body is the
+    // minimal gzip service: postMessage({id, input}) -> {id, output} or {id, error}.
+    const source = `
+      const { gzipSync } = require("node:zlib");
+      const { parentPort } = require("node:worker_threads");
+      parentPort.on("message", (job) => {
+        try {
+          const output = gzipSync(Buffer.from(job.input));
+          parentPort.postMessage({ id: job.id, output });
+        } catch (error) {
+          parentPort.postMessage({ id: job.id, error: String(error) });
+        }
+      });
+    `;
+    const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+    compressionWorker = new Worker(url, { name: "payload-gzip" });
+    compressionWorker.unref();
+    compressionWorker.on("message", (message: { id: number; output?: Buffer; error?: string }) => {
+      const job = pendingJobs.get(message.id);
+      if (!job) return;
+      pendingJobs.delete(message.id);
+      releaseCompressionSlot();
+      if (message.error !== undefined) job.reject(new Error(message.error));
+      else job.resolve(message.output ?? Buffer.alloc(0));
+    });
+    compressionWorker.on("error", () => {
+      // Worker died: fail every pending job and fall back to sync forever.
+      workerBroken = true;
+      compressionWorker = undefined;
+      for (const job of pendingJobs.values()) {
+        job.reject(new Error("payload compression worker failed"));
+      }
+      pendingJobs.clear();
+    });
+    return compressionWorker;
+  } catch {
+    workerBroken = true;
+    return undefined;
+  }
+}
+
+function releaseCompressionSlot(): void {
+  activeCompressionJobs -= 1;
+  const next = compressionQueue.shift();
+  if (next) next();
+}
+
+async function compressAsync(input: Buffer): Promise<Buffer> {
+  const worker = ensureCompressionWorker();
+  if (!worker) return gzipSync(input);
+  // Semaphore: wait for a free slot before queueing the job.
+  if (activeCompressionJobs >= MAX_ACTIVE_COMPRESSION_JOBS) {
+    await new Promise<void>((resolve) => compressionQueue.push(resolve));
+  }
+  activeCompressionJobs += 1;
+  try {
+    return await new Promise<Buffer>((resolve, reject) => {
+      const job: CompressionJob = {
+        id: nextJobId++,
+        input,
+        resolve: (output) => resolve(output),
+        reject: (error) => reject(error),
+      };
+      pendingJobs.set(job.id, job);
+      worker.postMessage({ id: job.id, input }, [input.buffer.slice(
+        input.byteOffset,
+        input.byteOffset + input.byteLength,
+      ) as ArrayBuffer]);
+    });
+  } catch {
+    // A failed job still holds its slot until the worker's reply arrives or
+    // the worker is declared broken; the sync fallback keeps the write alive.
+    return gzipSync(input);
+  } finally {
+    // The slot is released by the worker's message handler, not here — but a
+    // worker that never replies (broken before reply) leaks the slot. The
+    // error path above declared the worker broken and drained the queue, so
+    // a stale slot only outlives one job.
+  }
+}
+
+async function appendFrame(frame: PayloadFrame, parts?: readonly Buffer[]): Promise<PayloadFileReference> {
   const directory = payloadDirectory();
   await mkdir(directory, { recursive: true });
-  const encoded = Buffer.from(JSON.stringify(frame), "utf8");
-  if (encoded.byteLength > MAX_FRAME_BYTES) throw new Error("telemetry payload frame exceeds limit");
+  // Encoded as a line here rather than at the write, so the cap, the checksum,
+  // and the reference all describe the same bytes that land on disk — the
+  // prebuilt-parts path and the plain one cannot disagree about the shape.
+  // Single copy: the prebuilt parts (or the one serialized buffer) go to the
+  // compressor as-is; the join happens exactly once inside compressFrame.
+  // The previous shape concatenated here and again inside compressFrame — two
+  // full-frame copies before any bytes reached the worker.
+  const compressed = await compressFrame(
+    parts === undefined ? [Buffer.from(JSON.stringify(frame), "utf8")] : parts,
+  );
+  if (compressed.byteLength > MAX_FRAME_BYTES) throw new Error("telemetry payload frame exceeds limit");
+  const encoded = toLine(compressed);
   const file = fileName();
   const path = join(directory, file);
   const currentSize = await stat(path).then((value) => value.size).catch(() => 0);
   const offset = currentSize;
-  if (offset + FRAME_HEADER_BYTES + encoded.byteLength > maxFileBytes()) {
-    const rotated = `${Date.now()}-${randomUUID()}.jsonb`;
-    return appendFrameToPath(frame, join(directory, rotated));
+  if (offset + encoded.byteLength > maxFileBytes()) {
+    const rotated = `${Date.now()}-${randomUUID()}${FRAME_FILE_SUFFIX}`;
+    return appendFrameToPath(join(directory, rotated), encoded, basename(rotated));
   }
-  return appendFrameToPath(frame, path, file, offset, encoded);
+  return appendFrameToPath(path, encoded, file, offset);
+}
+
+/**
+ * One frame as a stored line: base64 of the gzipped JSON, newline-terminated.
+ *
+ * A newline is the frame delimiter, so the file is a text file of base64 lines
+ * and a frame's extent is found by reading to the next `\n` — a binary length
+ * header would make every frame opaque, unreadable without first decoding a
+ * big-endian length and then gunzipping exactly that many bytes.
+ *
+ * base64 rather than raw gzip bytes because gzip contains newlines, which
+ * would make the delimiter ambiguous.
+ */
+function toLine(compressed: Buffer): Buffer {
+  return Buffer.from(`${compressed.toString("base64")}\n`, "utf8");
 }
 
 async function appendFrameToPath(
-  frame: PayloadFrame,
   path: string,
+  encoded: Buffer,
   knownFile = basename(path),
   knownOffset?: number,
-  knownEncoded?: Buffer,
 ): Promise<PayloadFileReference> {
-  const encoded = knownEncoded ?? Buffer.from(JSON.stringify(frame), "utf8");
   const offset = knownOffset ?? await stat(path).then((value) => value.size).catch(() => 0);
-  const header = Buffer.alloc(FRAME_HEADER_BYTES);
-  header.writeUInt32BE(encoded.byteLength, 0);
   const handle = await open(path, "a");
   try {
-    await handle.write(Buffer.concat([header, encoded]));
+    await handle.write(encoded);
   } finally {
     await handle.close();
   }
   return {
-    storage: "jsonb-file",
+    storage: "jsonl-file",
     file: knownFile,
     offset,
-    length: FRAME_HEADER_BYTES + encoded.byteLength,
-    checksum: checksum(encoded.toString("utf8")),
+    length: encoded.byteLength,
+    checksum: checksum(encoded),
     version: 1,
   };
 }
 
-export function writePayloadFrame(payload: unknown, expiresAt: Date): Promise<PayloadFileReference> {
-  const frame: PayloadFrame = {
-    version: 1,
-    id: randomUUID(),
-    expiresAt: expiresAt.toISOString(),
-    payload,
-  };
-  const task = writeTail.then(() => appendFrame(frame));
-  writeTail = task.then(() => undefined, () => undefined);
+/**
+ * The frame's body keys, in the same order `buildPayloadRecord` serializes
+ * them.
+ *
+ * The record hands the writer one string per body already serialized, so the
+ * two orders must agree or every body lands under the wrong key. The order is
+ * drawer order with the legacy `response_body` alias last, for the same reason
+ * the record accounts it last: it names no panel of its own and must not
+ * spend the shared byte budget ahead of the provider stages.
+ *
+ * There are five, not four. `buildPayloadRecord` builds one string per surface
+ * and `response_body` is the fifth — dropping it here wrote the frame with the
+ * first four bodies and silently discarded the last, so a capture whose client
+ * response was in the legacy slot came back with that panel empty.
+ */
+const FRAME_BODY_KEYS = [
+  "request_body",
+  "provider_request_body",
+  "provider_response_body",
+  "client_response_body",
+  "response_body",
+] as const;
+
+/**
+ * The pieces of a frame whose bodies were already serialized while measured.
+ *
+ * Returned as separate buffers rather than one assembled buffer: the file
+ * write accepts a list, and assembling them first is a copy of the whole frame
+ * that nothing reads back.
+ */
+function prebuiltFrameParts(
+  id: string,
+  expiresAt: string,
+  capturedAt: string,
+  requestId: string | null,
+  signals: unknown,
+  bodies: readonly string[],
+): Buffer[] {
+  const parts = [
+    Buffer.from(
+      `{"version":1,"id":${JSON.stringify(id)},"expiresAt":${JSON.stringify(expiresAt)},` +
+        `"payload":{"request_id":${JSON.stringify(requestId)},"captured_at":${JSON.stringify(capturedAt)},` +
+        `"expires_at":${JSON.stringify(expiresAt)}`,
+      "utf8",
+    ),
+  ];
+  for (let index = 0; index < FRAME_BODY_KEYS.length; index += 1) {
+    parts.push(Buffer.from(`,"${FRAME_BODY_KEYS[index]}":${bodies[index] ?? "null"}`, "utf8"));
+  }
+  parts.push(Buffer.from(`,"signals":${JSON.stringify(signals)}}}`, "utf8"));
+  return parts;
+}
+
+export function writePayloadFrame(
+  payload: unknown,
+  expiresAt: Date,
+  prebuilt?: { readonly requestId: string | null; readonly capturedAt: string; readonly signals: unknown; readonly bodies: readonly string[] },
+): Promise<PayloadFileReference> {
+  const id = randomUUID();
+  const expires = expiresAt.toISOString();
+  const parts = prebuilt
+    ? prebuiltFrameParts(id, expires, prebuilt.capturedAt, prebuilt.requestId, prebuilt.signals, prebuilt.bodies)
+    : undefined;
+  const frame: PayloadFrame = { version: 1, id, expiresAt: expires, payload };
+  // Accounted in exact serialized frame bytes: the prebuilt parts are the
+  // buffers that will be written; the non-prebuilt path serializes here once
+  // (the same buffer the append would build anyway). Counting before queueing
+  // is what makes the byte bound real rather than an estimate.
+  const estimatedBytes = parts
+    ? parts.reduce((total, part) => total + part.byteLength, 0)
+    : Buffer.byteLength(JSON.stringify(frame), "utf8");
+  if (backlog.length >= MAX_PAYLOAD_BACKLOG_ITEMS) {
+    throw new PayloadBacklogFullError("items");
+  }
+  if (backlogBytes + estimatedBytes > MAX_PAYLOAD_BACKLOG_BYTES) {
+    throw new PayloadBacklogFullError("bytes");
+  }
+  const task = new Promise<PayloadFileReference>((resolve, reject) => {
+    // The entry settles the caller's promise itself: the drain loop's own
+    // `.catch(() => undefined)` is only there so one failed write cannot
+    // stop the rest of the backlog from running. Bytes are charged here, on
+    // queue, and discharged when the entry starts running — the window
+    // between is exactly the memory the bound exists to cap.
+    backlogBytes += estimatedBytes;
+    backlog.push({
+      estimatedBytes,
+      run: async () => {
+        try {
+          resolve(await appendFrame(frame, parts));
+        } catch (error) {
+          reject(error instanceof Error ? error : new Error(String(error)));
+        }
+      },
+    });
+  });
+  drainBacklog();
   return task;
 }
 
@@ -145,15 +474,50 @@ export async function readPayloadFrame(reference: PayloadFileReference): Promise
   const safeFile = basename(reference.file);
   if (safeFile !== reference.file || safeFile.length === 0) return undefined;
   const path = join(payloadDirectory(), safeFile);
-  const data = await readFile(path);
-  if (reference.offset < 0 || reference.offset + reference.length > data.byteLength) return undefined;
-  const frame = data.subarray(reference.offset, reference.offset + reference.length);
-  const length = frame.readUInt32BE(0);
-  if (length + FRAME_HEADER_BYTES !== frame.byteLength) return undefined;
-  const json = frame.subarray(FRAME_HEADER_BYTES).toString("utf8");
-  if (checksum(json) !== reference.checksum) return undefined;
-  const parsed = JSON.parse(json) as PayloadFrame;
+  // Read exactly the frame. Reading the whole file copied every earlier frame
+  // in the same hour into memory just to return one of them.
+  const handle = await open(path, "r");
+  let data: Buffer;
+  try {
+    const stat = await handle.stat();
+    if (reference.offset < 0 || reference.offset + reference.length > stat.size) return undefined;
+    data = Buffer.alloc(reference.length);
+    await handle.read(data, 0, reference.length, reference.offset);
+  } finally {
+    await handle.close();
+  }
+  const frame = data;
+  const json = frameJsonFromSlice(frame);
+  if (json === undefined) return undefined;
+  const parsed = JSON.parse(json.toString("utf8")) as PayloadFrame;
   return parsed.version === 1 ? parsed.payload : undefined;
+}
+
+/** Decompressed frame body, or undefined when the bytes are not gzip. */
+function gunzipFrame(stored: Buffer): Buffer | undefined {
+  try {
+    return gunzipSync(stored);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The JSON of one frame read out of a file.
+ *
+ * A frame is a base64 line — base64 because gzip contains newlines, which would
+ * make the newline delimiter ambiguous. The bytes are gunzipped only if they
+ * are gzip; `gunzipFrame` returning `undefined` is what marks a slice as not a
+ * frame.
+ */
+function frameJsonFromSlice(
+  slice: Buffer,
+): Buffer | undefined {
+  // Frames are a base64 line. The trailing newline is not part of the payload.
+  const text = slice.toString("utf8").trim();
+  if (text.length === 0) return undefined;
+  const gzipped = Buffer.from(text, "base64");
+  return gunzipFrame(gzipped);
 }
 
 /**
@@ -168,21 +532,23 @@ type FrameLiveness = "live" | "none" | "unknown";
 
 function frameLiveness(data: Buffer, before: Date): FrameLiveness {
   let offset = 0;
-  while (offset + FRAME_HEADER_BYTES <= data.byteLength) {
-    const length = data.readUInt32BE(offset);
-    const end = offset + FRAME_HEADER_BYTES + length;
-    // A length that runs past the file is a half-written tail, not a frame.
-    if (length <= 0 || end > data.byteLength) return "unknown";
+  while (offset < data.byteLength) {
+    const newline = data.indexOf(0x0a, offset);
+    if (newline <= 0) return "unknown";
+    const end = newline + 1;
+    const slice = data.subarray(offset, end);
+    const json = frameJsonFromSlice(slice);
+    if (json === undefined) return "unknown";
     let frame: PayloadFrame;
     try {
-      frame = JSON.parse(data.subarray(offset + FRAME_HEADER_BYTES, end).toString("utf8")) as PayloadFrame;
+      frame = JSON.parse(json.toString("utf8")) as PayloadFrame;
     } catch {
       return "unknown";
     }
     if (new Date(frame.expiresAt).getTime() >= before.getTime()) return "live";
     offset = end;
   }
-  // Bytes left over that are too short to hold a header are an unreadable tail.
+  // Bytes left over that are too short to hold a frame are an unreadable tail.
   return offset === data.byteLength ? "none" : "unknown";
 }
 
@@ -204,10 +570,11 @@ function frameLiveness(data: Buffer, before: Date): FrameLiveness {
  * supply that bound leaves the default, which keeps damaged files rather than
  * risk dropping a frame a row still addresses.
  *
- * One damaged file must not abort the pass. A single corrupt frame used to
- * throw straight out of the loop, so every other expired file stayed on disk
- * forever and the volume only grew — and because a container restart is the
- * usual way a half-written tail appears, the failure looked Docker-specific.
+ * One damaged file must not abort the pass. If a single corrupt frame threw
+ * straight out of the loop, every other expired file would stay on disk
+ * forever and the volume would only grow — and because a container restart is
+ * the usual way a half-written tail appears, the failure would look
+ * Docker-specific.
  */
 export async function prunePayloadFrames(
   before: Date,
@@ -217,7 +584,7 @@ export async function prunePayloadFrames(
   const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
   let deleted = 0;
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".jsonb")) continue;
+    if (!entry.isFile() || !isFrameFileName(entry.name)) continue;
     const path = join(directory, entry.name);
     try {
       if (await fileReclaimable(path, before, unparseableWrittenBefore)) {
@@ -244,7 +611,9 @@ async function fileReclaimable(
   unparseableWrittenBefore: Date,
 ): Promise<boolean> {
   const data = await readFile(path);
-  if (data.byteLength < FRAME_HEADER_BYTES) return true;
+  // Nothing written yet, so nothing to lose. A real frame is far longer than
+  // any header this format could carry.
+  if (data.byteLength === 0) return true;
   const liveness = frameLiveness(data, before);
   if (liveness === "live") return false;
   if (liveness === "none") return true;
