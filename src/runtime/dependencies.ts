@@ -33,6 +33,7 @@ import {
   RedisModelAbuseStore,
 } from "../security/model-abuse";
 import { checkReadiness, resolveRedisMode } from "../persistence/readiness";
+import { subscribePeerSettingsRevisions } from "../persistence/settings-revision";
 import { ProxyRequestPreparer } from "../transport/request/preparer";
 import { DrizzleNetworkPoolLoader } from "../network/pool/loader";
 import {
@@ -139,6 +140,7 @@ export async function buildProductionDeps(): Promise<ProductionDeps> {
   const snapshotService = new InMemoryRouteSnapshotService(
     createDatabaseSnapshotBuilder(db),
   );
+  subscribePeerSettingsRevisions();
   const routingEngine = new RoutingEngine(
     redis ? new RedisAdmissionController(redis) : undefined,
     // The usage floor reads the same cached quota windows the console renders,

@@ -82,6 +82,8 @@ export function getRedisOrUndefined(): RedisClient | undefined {
   }
 }
 
+export const resolveRedisClient = getRedisOrUndefined;
+
 export interface CloseRedisOptions {
   /** Bounded wait for `QUIT` before falling back to `disconnect()`. Defaults to 2s. */
   readonly quitTimeoutMs?: number;

@@ -2,6 +2,7 @@
 import { GatewayError } from "../gateway-error";
 import { type ServiceKind, type WireFamily } from "../canonical-model";
 import type { ProviderQuotaWindow } from "../../providers/quota/quota-contracts";
+import { publishRoutingInvalidation, subscribeRoutingInvalidation } from "../../persistence/shared-cache";
 
 
 export type RoutingRevision = number;
@@ -383,6 +384,7 @@ function deepFreeze<T>(obj: T): T {
 export class InMemoryRouteSnapshotService implements RouteSnapshotService {
   private revision: RoutingRevision = 0;
   private snapshot: RouteSnapshot | undefined;
+  readonly unsubscribe: () => void;
   /**
    * The in-flight build, tagged with the revision it is building.
    *
@@ -397,7 +399,12 @@ export class InMemoryRouteSnapshotService implements RouteSnapshotService {
    */
   private building: { revision: RoutingRevision; promise: Promise<RouteSnapshot> } | undefined;
 
-  constructor(private readonly builder: SnapshotBuilder) {}
+  constructor(private readonly builder: SnapshotBuilder) {
+    this.unsubscribe = subscribeRoutingInvalidation(() => {
+      this.revision += 1;
+      this.snapshot = undefined;
+    });
+  }
 
   async getSnapshot(): Promise<RouteSnapshot> {
     if (this.snapshot) return this.snapshot;
@@ -418,6 +425,7 @@ export class InMemoryRouteSnapshotService implements RouteSnapshotService {
   async invalidate(): Promise<RoutingRevision> {
     this.revision += 1;
     this.snapshot = undefined;
+    publishRoutingInvalidation();
     // Lazy: the next getSnapshot() rebuilds. Dashboard mutations only need
     // the new revision token — they must not pay seven Postgres round-trips
     // inside the mutating request while holding no pool pressure budget.
