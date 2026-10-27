@@ -386,6 +386,50 @@ export class ClaudeAdapter implements ProviderAdapter {
     }
     return true;
   }
+
+  async dispatchNativeService(
+    body: Record<string, unknown>,
+    candidate: ProviderDispatchTarget,
+    context: ProviderDispatchContext,
+  ): Promise<Response> {
+    const isClaudeCodeOAuth =
+      context.credential.credential_kind === "oauth" ||
+      context.credential.credential_kind === "scoped_access_token";
+    const customHeaders = filterClaudeCustomHeaders({
+      ...this.customHeaders,
+      ...context.credential.custom_headers,
+    });
+    const headerOptions: ClaudeHeaderOptions = {
+      credential_kind: context.credential.credential_kind,
+      custom_headers: customHeaders,
+      capabilities: candidate.capabilities,
+      unsupported_beta_policy: "reject",
+      target_provider: "claude",
+      has_thinking: false,
+      has_tools: false,
+      stream: false,
+      cli_version: getClaudeCliVersion(),
+      sdk_version: getClaudeSdkVersion(),
+      ...(context.request_headers === undefined ? {} : { request_headers: context.request_headers }),
+    };
+    const headers = buildClaudeHeaders(
+      context.credential.secret,
+      context.credential.account_id,
+      headerOptions,
+    );
+    const url = endpointUrl(
+      this.baseUrl,
+      candidate.endpoint_path || "/v1/messages/count_tokens",
+      isClaudeCodeOAuth,
+    );
+    const fetchFn = context.outbound_fetch ?? this.fetchFn;
+    return fetchFn(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: context.abort_signal,
+    });
+  }
 }
 
 export const claudeAdapter = new ClaudeAdapter();

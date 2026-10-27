@@ -35,6 +35,7 @@ import { createResponsesCompactHandler } from "./transport/dispatch/responses-co
 import { createSystemoneHandler } from "./transport/dispatch/systemone";
 import { createWebsearchHandler } from "./transport/dispatch/websearch";
 import { createImagesHandler } from "./transport/dispatch/images";
+import { createTokenCountHandler } from "./transport/dispatch/token-count";
 
 import { createTransportPipeline } from "./transport/middleware/pipeline";
 import { createDrainHandler } from "./transport/drain-endpoint";
@@ -490,6 +491,19 @@ export function createGatewayApp(deps: GatewayAppDeps) {
       resolveOAuthRefresher: deps.resolveOAuthRefresher,
       oauthRefreshService: deps.oauthRefreshService,
     });
+    const handleTokenCount = createTokenCountHandler({
+      db: deps.db,
+      providerAdapters: deps.providerAdapters ?? new Map(),
+      resolveProviderAdapter: deps.resolveProviderAdapter,
+      proxyPreparer: deps.proxyPreparer,
+      stateStore: requestStateStore,
+      poolSelector: deps.poolSelector,
+      networkBindingFactory: deps.networkBindingFactory,
+      snapshotService: deps.snapshotService,
+      telemetryBuffer: deps.telemetryBuffer,
+      resolveOAuthRefresher: deps.resolveOAuthRefresher,
+      oauthRefreshService: deps.oauthRefreshService,
+    });
 
     // Gateway mounting: the pipeline owner composes stages, telemetry, and
     // cleanup; app only registers the public route table.
@@ -499,6 +513,7 @@ export function createGatewayApp(deps: GatewayAppDeps) {
         routes.post("/responses", proxyHandler);
         routes.post("/responses/compact", handleResponsesCompact);
         routes.post("/messages", proxyHandler);
+        routes.post("/messages/count_tokens", handleTokenCount);
         routes.post("/completions", proxyHandler);
         routes.post("/systemone", handleSystemone);
         routes.post("/search", handleWebsearch);

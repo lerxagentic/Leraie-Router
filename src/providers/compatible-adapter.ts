@@ -342,7 +342,7 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
    * `questions` — and leaves question-level shape to upstream), so this method
    * only stamps headers and posts.
    */
-  async systemone(
+  async dispatchNativeService(
     body: Record<string, unknown>,
     candidate: ProviderDispatchTarget,
     context: ProviderDispatchContext,
@@ -357,6 +357,14 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
     const upstream = await postUpstreamJson(fetchUrl, headers, body, context, outboundFetch);
     upstream.release();
     return upstream.res;
+  }
+
+  async systemone(
+    body: Record<string, unknown>,
+    candidate: ProviderDispatchTarget,
+    context: ProviderDispatchContext,
+  ): Promise<Response> {
+    return this.dispatchNativeService(body, candidate, context);
   }
 
   protected async *transformStream(

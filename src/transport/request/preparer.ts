@@ -792,4 +792,21 @@ export class ProxyRequestPreparer {
       emptyMessage: `no eligible route serves the '${input.serviceKind}' service for this model`,
     });
   }
+
+  async prepareNativeTokenCount(input: {
+    readonly model: string;
+    readonly authorization: ResolvedApiKey;
+    readonly signal?: AbortSignal;
+    readonly clientUserAgent?: string;
+  }): Promise<PreparedNativeRequest> {
+    return this.#planNative({
+      model: input.model,
+      authorization: input.authorization,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+      ...(input.clientUserAgent === undefined ? {} : { clientUserAgent: input.clientUserAgent }),
+      eligible: (candidate) => candidate.wire_family === "messages",
+      emptyMessage:
+        "no eligible route can count tokens for this model — only an Anthropic Messages provider has /v1/messages/count_tokens",
+    });
+  }
 }

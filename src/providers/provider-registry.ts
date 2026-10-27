@@ -235,6 +235,15 @@ export interface ProviderAdapter {
     context: ProviderDispatchContext,
   ): Promise<Response>;
   /**
+   * Posts an opaque body to a candidate's own endpoint and returns the raw
+   * upstream response. Shared escape hatch for native services like count_tokens.
+   */
+  dispatchNativeService?(
+    body: Record<string, unknown>,
+    candidate: ProviderDispatchTarget,
+    context: ProviderDispatchContext,
+  ): Promise<Response>;
+  /**
    * Optional native web-search capability, the analogue of {@link systemone}
    * for the `/v1/search` route. The caller's body is opaque (`{query,
    * max_results, …}`); the adapter maps it onto the provider's own search API

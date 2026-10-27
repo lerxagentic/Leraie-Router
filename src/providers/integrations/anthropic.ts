@@ -107,6 +107,34 @@ export class AnthropicApiKeyAdapter implements ProviderAdapter {
       this.fetchFn,
     );
   }
+
+  async dispatchNativeService(
+    body: Record<string, unknown>,
+    candidate: ProviderDispatchTarget,
+    context: ProviderDispatchContext,
+  ): Promise<Response> {
+    const apiKey = new TextDecoder().decode(context.credential.secret);
+    const customHeaders = filterClaudeCustomHeaders({
+      ...this.customHeaders,
+      ...context.credential.custom_headers,
+    });
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+      ...customHeaders,
+    };
+    const endpointPath = candidate.endpoint_path || "/v1/messages/count_tokens";
+    const base = (this.baseUrl ?? providerBaseUrl("anthropic")).replace(/\/+$/, "");
+    const url = `${base}${endpointPath.startsWith("/") ? "" : "/"}${endpointPath}`;
+    const fetchImpl = context.outbound_fetch ?? this.fetchFn;
+    return fetchImpl(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+      signal: context.abort_signal,
+    });
+  }
 }
 
 export function createAnthropicAdapter(fetchImpl?: typeof fetch): ProviderAdapter {
