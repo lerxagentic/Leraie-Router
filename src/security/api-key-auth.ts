@@ -28,11 +28,17 @@ const AUTH_CACHE_MAX_ENTRIES = 10_000;
 interface AuthCacheEntry {
   readonly at: number;
   readonly value: ResolvedApiKey;
+  readonly expiresAt?: Date;
 }
 
 const authCache = new Map<string, AuthCacheEntry>();
 /** Reverse index: keyId → set of token hashes that resolved to it. */
 const authCacheByKeyId = new Map<string, Set<string>>();
+
+/** Expiry is inclusive: a credential is unusable from its stated instant onward. */
+export function isApiKeyExpired(expiresAt: Date | null | undefined, now = new Date()): boolean {
+  return expiresAt !== null && expiresAt !== undefined && expiresAt.getTime() <= now.getTime();
+}
 
 function evictAuthCacheOldest(): void {
   while (authCache.size > AUTH_CACHE_MAX_ENTRIES) {
@@ -201,6 +207,8 @@ export interface ResolvedApiKey {
   readonly modelPrefix?: string;
   /** Share-template id whose remote CLI mappings are inherited by this child. */
   readonly cliMappingOwnerId?: string;
+  /** Earliest expiry in the authenticated key family, for cache safety. */
+  readonly expiresAt?: Date;
 }
 /** Extracts exactly one supported credential source, preserving public auth statuses. */
 export function requestToken(headers: Headers | Record<string, string>): string {
@@ -239,10 +247,10 @@ export async function resolveApiKeyAuthorization(
 ): Promise<ResolvedApiKey | undefined> {
   const hash = hashSecret(token);
   const cached = authCache.get(hash);
-  if (cached && Date.now() - cached.at < AUTH_CACHE_TTL_MS) return cached.value;
+  if (cached && Date.now() - cached.at < AUTH_CACHE_TTL_MS && !isApiKeyExpired(cached.expiresAt)) return cached.value;
   const store = new DrizzleApiKeyStore(db);
   const row = await store.findActiveByHash(hash);
-  if (!row) return undefined;
+  if (!row || isApiKeyExpired(row.expiresAt)) return undefined;
   // A child (shared) key consumes against its parent's quota, not just its
   // own: the parent's budget is the operator's global cap across all
   // recipients. Without this the parent's lifetime budget never moves no
@@ -251,7 +259,7 @@ export async function resolveApiKeyAuthorization(
   const parent =
     row.parentKeyId !== null ? await store.findActiveById(row.parentKeyId) : undefined;
   // Share children authenticate as themselves but inherit the template's live
-  if (row.parentKeyId !== null && parent === undefined) return undefined;
+  if (row.parentKeyId !== null && (parent === undefined || isApiKeyExpired(parent.expiresAt))) return undefined;
   // policy. Copy-on-issue alone went stale the moment an operator tightened a
   // limit or blocked a client router on the parent — existing recipients kept
   // the old row values forever. Reading the parent here makes denylist /
@@ -290,8 +298,11 @@ export async function resolveApiKeyAuthorization(
     snapshot,
     ...(policy.modelPrefix ? { modelPrefix: policy.modelPrefix } : {}),
     ...(parent?.keyMode === "share" ? { cliMappingOwnerId: parent.id } : {}),
+    ...(row.expiresAt || parent?.expiresAt
+      ? { expiresAt: new Date(Math.min(row.expiresAt?.getTime() ?? Infinity, parent?.expiresAt?.getTime() ?? Infinity)) }
+      : {}),
   };
-  authCache.set(hash, { at: Date.now(), value });
+  authCache.set(hash, { at: Date.now(), value, ...(value.expiresAt ? { expiresAt: value.expiresAt } : {}) });
   const hashes = authCacheByKeyId.get(value.id) ?? new Set<string>();
   hashes.add(hash);
   authCacheByKeyId.set(value.id, hashes);

@@ -63,6 +63,14 @@ export function useReorderApiKeys() {
   });
 }
 
+/** Reads back the stored secret of one personal key. */
+export function useRevealApiKey() {
+  return useMutation<{ secret: string }, ApiErrorShape, string>({
+    mutationFn: (keyId) =>
+      consoleRequest<{ secret: string }>(`/api-keys/${encodeURIComponent(keyId)}/reveal`),
+  });
+}
+
 /** Revokes an API key and refreshes the key list. */
 export function useRevokeApiKey() {
   const queryClient = useQueryClient();

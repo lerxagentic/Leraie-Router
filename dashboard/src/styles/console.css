@@ -573,6 +573,22 @@
   padding-bottom: 4px;
 }
 
+/*
+ * API-key list search field.
+ *
+ * The field sits directly under the card header divider, so it needs its own
+ * breathing room: a margin above keeps it off the divider, and the same margin
+ * below separates it from the first credential row instead of letting the two
+ * rounded boxes read as one block.
+ */
+.api-keys-search {
+  margin: 2px 0 10px;
+}
+
+.api-keys-search .form-group {
+  gap: 0;
+}
+
 /* ===== sortable lists ===== */
 /* Rows that can be dragged into a new order (API credentials, combos,
    aliases). The left rail carries the drag handle and the 1-based position;

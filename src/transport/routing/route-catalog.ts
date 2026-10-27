@@ -30,6 +30,7 @@ import {
 import { DEFAULT_PROXY_BYPASS_PROVIDER_IDS, isBundledProviderId } from "../../providers/provider-registry";
 import type { ServiceKind, WireFamily } from "../canonical-model";
 import { providerHasAdapterUserAgent, providerUsesBespokeWire } from "../../providers/provider-metadata";
+import { resolveUsageFloor } from "./usage-floor";
 
 const CLAUDE_MODEL_FAMILIES = new Set(["opus", "sonnet", "haiku", "fable", "mythos"]);
 
@@ -255,6 +256,8 @@ const ROUTING_COLUMNS = {
   maxInflight: providerRoutingSettings.maxInflight,
   creditLimitEnabled: providerRoutingSettings.creditLimitEnabled,
   creditLimit: providerRoutingSettings.creditLimit,
+  usageFloor: providerRoutingSettings.usageFloor,
+  usageFloorUnit: providerRoutingSettings.usageFloorUnit,
   enabled: providerRoutingSettings.enabled,
   bypassProxy: providerRoutingSettings.bypassProxy,
   assignedPoolId: providerRoutingSettings.assignedPoolId,
@@ -386,6 +389,8 @@ class RouteCatalogRepository {
         maxInflight: row.maxInflight,
         creditLimitEnabled: row.creditLimitEnabled,
         creditLimit: row.creditLimit,
+        usageFloor: row.usageFloor,
+        usageFloorUnit: row.usageFloorUnit === "credit" ? "credit" : "percent",
         enabled: row.enabled,
         bypassProxy: row.bypassProxy,
         assignedPoolId: row.assignedPoolId,
@@ -597,6 +602,17 @@ class RouteCatalogRepository {
               credit_limit_enabled: credit.enabled,
               credit_limit: credit.limit,
             };
+          })(),
+          ...(() => {
+            // The usage floor is read per candidate so the routing decision and
+            // the console panel that configures it can never disagree.
+            const floor = resolveUsageFloor(
+              rowTenantId ? providerRouting[rowTenantId]?.[model.providerId] : undefined,
+              providerRouting.__global__?.[model.providerId],
+            );
+            return floor === undefined
+              ? {}
+              : { usage_floor: floor.floor as number, usage_floor_unit: floor.unit };
           })(),
           ...(typeof account.lastRemainingCredit === "string"
             ? { last_remaining_credit: Number(account.lastRemainingCredit) }

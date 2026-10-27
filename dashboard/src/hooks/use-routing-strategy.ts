@@ -5,6 +5,14 @@ import type { ProviderRoutingResponse } from "../data/contracts";
 
 export type RoutingStrategy = ProviderRoutingResponse["strategy"];
 
+/**
+ * Which reading the usage floor compares. Duplicated rather than imported from
+ * `src/transport/routing/usage-floor` for the same reason the bypass-provider
+ * set below is: importing the backend module graph would pull `node:crypto`
+ * into the browser build.
+ */
+export type UsageFloorUnit = "credit" | "percent";
+
 export const ROUTING_ACTIVE_LABEL = {
   fallback: "Failover",
   roundRobin: "Round robin",
@@ -39,6 +47,12 @@ export interface RoutingStrategyState {
   /** Global minimum remaining credits to keep on every account; default 200. */
   readonly creditLimit: number;
   readonly setCreditLimit: (next: number) => void;
+  /** Minimum remaining allowance to stay routable; `null` = no floor. */
+  readonly usageFloor: number | null;
+  readonly setUsageFloor: (next: number | null) => void;
+  /** Which reading the floor compares: absolute credit or percent. */
+  readonly usageFloorUnit: UsageFloorUnit;
+  readonly setUsageFloorUnit: (next: UsageFloorUnit) => void;
   readonly isLoading: boolean;
   readonly isError: boolean;
   readonly isSaving: boolean;
@@ -61,6 +75,8 @@ export function useRoutingStrategy(providerId: string, allowUserAgent: boolean):
   const [userAgent, setUserAgentState] = useState("codex_cli_rs/0.156.1");
   const [creditLimitEnabled, setCreditLimitEnabledState] = useState(true);
   const [creditLimit, setCreditLimitState] = useState(200);
+  const [usageFloor, setUsageFloorState] = useState<number | null>(null);
+  const [usageFloorUnit, setUsageFloorUnitState] = useState<UsageFloorUnit>("percent");
 
   useEffect(() => {
     if (!query.data) return;
@@ -72,6 +88,8 @@ export function useRoutingStrategy(providerId: string, allowUserAgent: boolean):
     setUserAgentState(query.data.userAgent);
     setCreditLimitEnabledState(query.data.creditLimitEnabled);
     setCreditLimitState(query.data.creditLimit);
+    setUsageFloorState(query.data.usageFloor ?? null);
+    setUsageFloorUnitState(query.data.usageFloorUnit ?? "percent");
   }, [query.data]);
 
   const save = (next: {
@@ -83,7 +101,12 @@ export function useRoutingStrategy(providerId: string, allowUserAgent: boolean):
     userAgent: string;
     creditLimitEnabled: boolean;
     creditLimit: number;
+    /** Omitted by the older call sites; the current state is used then. */
+    usageFloor?: number | null;
+    usageFloorUnit?: UsageFloorUnit;
   }) => {
+    const nextFloor = next.usageFloor === undefined ? usageFloor : next.usageFloor;
+    const nextFloorUnit = next.usageFloorUnit ?? usageFloorUnit;
     mutation.mutate(
       {
         providerId,
@@ -96,6 +119,8 @@ export function useRoutingStrategy(providerId: string, allowUserAgent: boolean):
           assignedPoolId: next.assignedPoolId,
           creditLimitEnabled: next.creditLimitEnabled,
           creditLimit: next.creditLimit,
+          usageFloor: nextFloor,
+          usageFloorUnit: nextFloorUnit,
           ...(allowUserAgent ? { userAgent: next.userAgent } : {}),
         },
       },
@@ -109,6 +134,8 @@ export function useRoutingStrategy(providerId: string, allowUserAgent: boolean):
           setUserAgentState(query.data.userAgent);
           setCreditLimitEnabledState(query.data.creditLimitEnabled);
           setCreditLimitState(query.data.creditLimit);
+          setUsageFloorState(query.data.usageFloor ?? null);
+          setUsageFloorUnitState(query.data.usageFloorUnit ?? "percent");
         },
       },
     );
@@ -170,6 +197,8 @@ export function useRoutingStrategy(providerId: string, allowUserAgent: boolean):
     userAgent,
     creditLimitEnabled,
     creditLimit,
+    usageFloor,
+    usageFloorUnit,
     isLoading: query.isPending,
     isError: query.isError,
     isSaving: mutation.isPending,
@@ -229,6 +258,36 @@ export function useRoutingStrategy(providerId: string, allowUserAgent: boolean):
     setCreditLimit: (next) => {
       setCreditLimitState(next);
       scheduleCreditLimitSave(next);
+    },
+    setUsageFloor: (next) => {
+      setUsageFloorState(next);
+      save({
+        strategy,
+        rotateCount,
+        maxInflight,
+        bypassProxy,
+        assignedPoolId,
+        userAgent,
+        creditLimitEnabled,
+        creditLimit,
+        usageFloor: next,
+        usageFloorUnit,
+      });
+    },
+    setUsageFloorUnit: (next) => {
+      setUsageFloorUnitState(next);
+      save({
+        strategy,
+        rotateCount,
+        maxInflight,
+        bypassProxy,
+        assignedPoolId,
+        userAgent,
+        creditLimitEnabled,
+        creditLimit,
+        usageFloor,
+        usageFloorUnit: next,
+      });
     },
     roundRobinEnabled: strategy === "round_robin",
     setRoundRobinEnabled: (next) => {

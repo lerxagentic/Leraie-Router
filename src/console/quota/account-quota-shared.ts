@@ -49,6 +49,7 @@ export function createQuotaRefreshDeps(deps: AccountQuotaRoutesDeps): QuotaRefre
     providerRegistry: deps.providerRegistry,
     resolveCredential: deps.resolveCredential,
     ...(deps.snapshotInvalidator ? { snapshotInvalidator: deps.snapshotInvalidator } : {}),
+    ...(deps.quotaFetcherFor ? { quotaFetcherFor: deps.quotaFetcherFor } : {}),
     markApiKeyCredential: (providerId, credential) =>
       providerId === "cline" ? markClineApiKeyCredential(credential) : credential,
   };

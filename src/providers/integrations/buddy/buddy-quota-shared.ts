@@ -190,7 +190,10 @@ function buildBillingWindows(
     // do not read the optional `recurring` field. Keep label human-readable.
     const kind = `quota:${base.toLowerCase()}${seenRefill[base] > 1 ? `_${seenRefill[base]}` : ""}`;
     const w = percentWindow(kind, label, pct, resetAt, used, total);
-    windows.push({ ...w, kind, label, recurring: true });
+    // A recurring allowance is its own quota, not spendable credit: an account
+    // at 0% monthly can still serve from a bonus pack, so the usage floor must
+    // not treat this window as the account's balance.
+    windows.push({ ...w, kind, label, recurring: true, accounting: "independent" });
   }
 
   bonuses.forEach((acc, idx) => {
@@ -201,7 +204,8 @@ function buildBillingWindows(
     const resetAt = parseBillingResetTime(acc.CycleEndTime);
     const pct = usedPercent(used, total);
     const w = percentWindow(kind, label, pct, resetAt, used, total);
-    windows.push({ ...w, kind, label, recurring: false });
+    // Bonus packs are the account's actual spendable credit pool.
+    windows.push({ ...w, kind, label, recurring: false, accounting: "pooled" });
   });
 
   const basePkg = (refills[0] ?? accounts[0] ?? {}) as TencentBillingAccount;

@@ -21,6 +21,7 @@ const ROUTING_BOUNDS = {
   rotateCount: { min: 1, max: 1000 },
   maxInflight: PROVIDER_ROUTING_MAX_INFLIGHT_BOUNDS,
   creditLimit: { min: 0, max: 1_000_000_000 },
+  usageFloor: { min: 0, max: 1_000_000 },
 } as const;
 
 export function createProviderDetailOperations(deps: ProviderDetailConfig) {
@@ -87,6 +88,31 @@ export function createProviderDetailOperations(deps: ProviderDetailConfig) {
           );
         }
       }
+      if (patch.usageFloor !== undefined && patch.usageFloor !== null) {
+        const { usageFloor } = ROUTING_BOUNDS;
+        if (
+          !Number.isInteger(patch.usageFloor) ||
+          patch.usageFloor < usageFloor.min ||
+          patch.usageFloor > usageFloor.max
+        ) {
+          throw new ConsoleDomainError(
+            "invalid_usage_floor",
+            400,
+            `usageFloor must be an integer between ${usageFloor.min} and ${usageFloor.max}, or null`,
+          );
+        }
+      }
+      if (
+        patch.usageFloorUnit !== undefined &&
+        patch.usageFloorUnit !== "credit" &&
+        patch.usageFloorUnit !== "percent"
+      ) {
+        throw new ConsoleDomainError(
+          "invalid_request",
+          400,
+          "usageFloorUnit must be credit or percent",
+        );
+      }
       const updated = await deps.store.updateRouting(providerId, a.tenantId, patch);
       await deps.auditSink?.record({
         access: a,
@@ -139,6 +165,12 @@ const updateRoutingBody = t.Object({
   creditLimit: t.Optional(
     t.Integer({ minimum: ROUTING_BOUNDS.creditLimit.min, maximum: ROUTING_BOUNDS.creditLimit.max }),
   ),
+  usageFloor: t.Optional(
+    t.Nullable(
+      t.Integer({ minimum: ROUTING_BOUNDS.usageFloor.min, maximum: ROUTING_BOUNDS.usageFloor.max }),
+    ),
+  ),
+  usageFloorUnit: t.Optional(t.Union([t.Literal("credit"), t.Literal("percent")])),
 });
 
 

@@ -182,6 +182,8 @@ CREATE TABLE "provider_routing_settings" (
   "max_inflight" integer,
   "credit_limit_enabled" boolean DEFAULT true NOT NULL,
   "credit_limit" integer DEFAULT 200 NOT NULL,
+  "usage_floor" integer,
+  "usage_floor_unit" text DEFAULT 'percent' NOT NULL,
   "enabled" boolean DEFAULT false NOT NULL,
   "user_agent" text DEFAULT 'codex_cli_rs/0.156.1' NOT NULL,
   "bypass_proxy" boolean DEFAULT false NOT NULL,
@@ -212,6 +214,8 @@ CREATE TABLE "api_keys" (
   "monthly_token_limit" bigint,
   "lifetime_token_budget" bigint,
   "lifetime_tokens_consumed" bigint DEFAULT 0 NOT NULL,
+  "expires_at" timestamptz,
+  "model_template_id" uuid,
   "max_concurrent_requests" integer,
   "model_access_mode" text DEFAULT 'whitelist' NOT NULL,
   "model_list" jsonb,
@@ -248,6 +252,18 @@ CREATE TABLE "api_keys" (
     ))
   )
 );
+--> statement-breakpoint
+CREATE TABLE "model_templates" (
+  "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
+  "tenant_id" uuid NOT NULL,
+  "name" text NOT NULL,
+  "model_list" jsonb NOT NULL,
+  "created_at" timestamptz DEFAULT now() NOT NULL,
+  CONSTRAINT "model_templates_tenant_id_tenants_id_fk" FOREIGN KEY ("tenant_id") REFERENCES "tenants"("id") ON DELETE cascade,
+  CONSTRAINT "model_templates_tenant_name_unique" UNIQUE ("tenant_id", "name")
+);
+--> statement-breakpoint
+CREATE INDEX "model_templates_tenant_id_idx" ON "model_templates" USING btree ("tenant_id");
 --> statement-breakpoint
 CREATE TABLE "console_users" (
   "id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,

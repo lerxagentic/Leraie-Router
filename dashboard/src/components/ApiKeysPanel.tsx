@@ -1,5 +1,7 @@
 import {
+  Eye,
   KeyRound,
+  Layers,
   Pencil,
   Plus,
   RotateCw,
@@ -16,12 +18,16 @@ import { EmptyState, ErrorState, LoadingState } from "./ui/state";
 import { Switch } from "./ui/switch";
 import { ApiKeyForm, oneTimeSecretForMode, type KeyFormInput } from "./ApiKeyForm";
 import { ApiKeySecretDialog } from "./ApiKeySecretDialog";
+import { ApiKeyUnavailableSecretDialog } from "./ApiKeyUnavailableSecretDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { ModelTemplatesDialog } from "./ModelTemplatesDialog";
 import { ModelBansDialog } from "./ModelBansDialog";
 import { regenerateWarning, ShareManagementDialog } from "./ShareManagementDialog";
 import { SortableList } from "./SortableList";
 import { toast } from "../shared/toast";
 import { getErrorMessage } from "../shared/helpers";
+import { Input } from "./ui/input";
+import { filterApiKeys } from "../lib/api-key-search";
 import { useSessionUser } from "../hooks/system";
 import type { ApiKeyResponse } from "../data/contracts";
 import {
@@ -29,6 +35,7 @@ import {
   useCreateApiKey,
   useRegenerateApiKey,
   useReorderApiKeys,
+  useRevealApiKey,
   useRevokeApiKey,
   useUpdateApiKey,
 } from "../hooks/api-keys";
@@ -62,6 +69,7 @@ export function ApiKeysPanel(): ReactNode {
   const createKey = useCreateApiKey();
   const updateKey = useUpdateApiKey();
   const revokeKey = useRevokeApiKey();
+  const revealKey = useRevealApiKey();
   const regenerateKey = useRegenerateApiKey();
   const reorderKeys = useReorderApiKeys();
   const [createOpen, setCreateOpen] = useState(false);
@@ -69,10 +77,14 @@ export function ApiKeysPanel(): ReactNode {
   const [revokeTarget, setRevokeTarget] = useState<ApiKeyResponse | null>(null);
   const [rotateTarget, setRotateTarget] = useState<ApiKeyResponse | null>(null);
   const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [unavailableRevealOpen, setUnavailableRevealOpen] = useState(false);
   const [shareTarget, setShareTarget] = useState<ApiKeyResponse | null>(null);
   const [bansOpen, setBansOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
 
   const keys = keysQuery.data ?? [];
+  const visibleKeys = filterApiKeys(keys, search);
   // Bans are keyed on the client address, so they are cross-tenant: only a
   // platform admin may see or lift one, and the entry point is hidden for
   // everyone else. The endpoint enforces this too — the gate here is UX.
@@ -107,6 +119,14 @@ export function ApiKeysPanel(): ReactNode {
               </Button>
             ) : null}
             <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setTemplatesOpen(true)}
+              icon={<Layers size={13} />}
+            >
+              Templates
+            </Button>
+            <Button
               variant="primary"
               size="sm"
               onClick={() => { setRevealedSecret(null); setCreateOpen(true); }}
@@ -134,9 +154,25 @@ export function ApiKeysPanel(): ReactNode {
         ) : (
           // The key list is the tallest thing on the page; bounding it keeps the
           // page chrome in place and scrolls only the rows, like the sidebar.
+          <>
+          <div className="api-keys-search">
+            <Input
+              aria-label="Search API keys"
+              placeholder="Search label, key prefix, or allowed model"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+            />
+          </div>
+          {visibleKeys.length === 0 ? (
+            <EmptyState
+              title="No API keys match"
+              message="Try a label, public key prefix, or allowed model name."
+              icon={<KeyRound size={20} />}
+            />
+          ) : (
           <div className="scroll-region" style={{ maxHeight: "560px", paddingRight: "2px" }}>
           <SortableList
-            items={keys}
+            items={visibleKeys}
             label="API credentials"
             disabled={reorderKeys.isPending}
             onReorder={(ids) =>
@@ -207,6 +243,11 @@ export function ApiKeysPanel(): ReactNode {
                     <span>Daily {limitLabel(key.dailyTokenLimit)}</span>
                     <span>Monthly {limitLabel(key.monthlyTokenLimit)}</span>
                     <span>One-time {limitLabel(key.lifetimeTokenBudget)}</span>
+                    <span>
+                      {key.expiresAt
+                        ? `Expires ${new Date(key.expiresAt).toLocaleDateString()}`
+                        : "Never expires"}
+                    </span>
                     <span>Concurrent {limitLabel(key.maxConcurrentRequests)}</span>
                     <span>
                       {key.modelAccessMode === "blacklist"
@@ -216,6 +257,23 @@ export function ApiKeysPanel(): ReactNode {
                   </div>
                 </div>
                 <div style={{ display: "flex", gap: "6px", flexShrink: 0, flexWrap: "wrap" }}>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    icon={<Eye size={13} />}
+                    disabled={revealKey.isPending}
+                    onClick={() =>
+                      revealKey.mutate(key.id, {
+                        onSuccess: (result) => setRevealedSecret(result.secret),
+                        // A share template or a row without a stored ciphertext
+                        // genuinely has no secret to show; explain that instead
+                        // of pretending the click failed.
+                        onError: () => setUnavailableRevealOpen(true),
+                      })
+                    }
+                  >
+                    Reveal
+                  </Button>
                   {!key.revokedAt ? (
                     <Switch
                       checked={key.enabled}
@@ -279,6 +337,8 @@ export function ApiKeysPanel(): ReactNode {
             )}
           />
           </div>
+          )}
+          </>
         )}
       </CardBody>
 
@@ -386,7 +446,13 @@ export function ApiKeysPanel(): ReactNode {
 
       {bansOpen ? <ModelBansDialog onClose={() => setBansOpen(false)} /> : null}
 
+      <ModelTemplatesDialog open={templatesOpen} onClose={() => setTemplatesOpen(false)} />
+
       <ApiKeySecretDialog secret={revealedSecret} onClose={() => setRevealedSecret(null)} />
+      <ApiKeyUnavailableSecretDialog
+        open={unavailableRevealOpen}
+        onClose={() => setUnavailableRevealOpen(false)}
+      />
 
     </Card>
   );

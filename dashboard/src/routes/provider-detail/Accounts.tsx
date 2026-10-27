@@ -6,6 +6,7 @@ import {
   LockOpen,
   Pencil,
   PowerOff,
+  RefreshCw,
   RotateCcw,
   Search,
   Trash2,
@@ -535,6 +536,13 @@ export function AccountsList({
     () => accounts.filter((account) => selected.has(account.id)),
     [accounts, selected],
   );
+  const selectedStaticTokenAccounts = useMemo(
+    () =>
+      selectedAccounts.filter(
+        (account) => account.staticToken || account.credentialMode === "jwt",
+      ),
+    [selectedAccounts],
+  );
   const allFilteredSelected =
     filtered.length > 0 && filtered.every((account) => selected.has(account.id));
 
@@ -577,6 +585,21 @@ export function AccountsList({
     runBulk("Recover", (account) =>
       recover.mutateAsync({ providerId, accountId: account.id }),
     );
+
+  const bulkReenableRefresh = async () => {
+    if (selectedStaticTokenAccounts.length === 0) return;
+    setBulkBusy(true);
+    const results = await Promise.allSettled(
+      selectedStaticTokenAccounts.map((account) =>
+        update.mutateAsync({ providerId, accountId: account.id, request: { staticToken: false } }),
+      ),
+    );
+    const failed = results.filter((result) => result.status === "rejected").length;
+    const ok = results.length - failed;
+    setBulkBusy(false);
+    if (failed === 0) toast.success("Refresh re-enabled", `${ok} account${ok === 1 ? "" : "s"}`);
+    else toast.error("Refresh re-enable partially failed", `${ok} succeeded, ${failed} failed`);
+  };
 
   /**
    * Tests every selected account. Unlike the other bulk actions a failed test
@@ -805,6 +828,18 @@ export function AccountsList({
             <Button size="sm" variant="secondary" icon={<RotateCcw size={12} />} disabled={bulkBusy} onClick={bulkRecover}>
               Recover
             </Button>
+            {selectedStaticTokenAccounts.length > 0 ? (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<RefreshCw size={12} />}
+                disabled={bulkBusy}
+                onClick={() => void bulkReenableRefresh()}
+                title="Allow the selected static JWT/OAuth accounts to enter the OAuth refresh sweep again"
+              >
+                Re-enable refresh
+              </Button>
+            ) : null}
             <Button size="sm" variant="secondary" icon={<LockOpen size={12} />} disabled={bulkBusy} onClick={() => bulkSetActive(true)}>
               Enable
             </Button>

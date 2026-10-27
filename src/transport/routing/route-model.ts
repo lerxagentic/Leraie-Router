@@ -1,6 +1,7 @@
 // Routing contracts and snapshots.
 import { GatewayError } from "../gateway-error";
 import { type ServiceKind, type WireFamily } from "../canonical-model";
+import type { ProviderQuotaWindow } from "../../providers/quota/quota-contracts";
 
 
 export type RoutingRevision = number;
@@ -32,6 +33,11 @@ export interface RouteCandidate {
   readonly credit_limit?: number;
   /** Last remaining credit the quota sweep fetched; absent = never fetched. */
   readonly last_remaining_credit?: number | null;
+  /** Minimum remaining allowance to stay routable; absent = no floor. */
+  readonly usage_floor?: number;
+  readonly usage_floor_unit?: "credit" | "percent";
+  /** Cached quota windows for this account, read per plan to evaluate the floor. */
+  readonly quota_windows?: readonly ProviderQuotaWindow[] | undefined;
   /** Operator-facing label of `provider_account_id` (never the secret), for
    * the Console Log detail line — logs must show a name, not a bare id. */
   readonly provider_account_label?: string;
@@ -85,6 +91,10 @@ export interface ProviderRoutingSetting {
   readonly creditLimitEnabled?: boolean;
   /** Minimum remaining credits to keep on every account of this provider/tenant. */
   readonly creditLimit?: number;
+  /** Minimum remaining allowance to stay routable; `null`/absent = no floor. */
+  readonly usageFloor?: number | null;
+  /** Which reading `usageFloor` compares: absolute credit or percent. */
+  readonly usageFloorUnit?: "credit" | "percent";
   readonly enabled: boolean;
   /** Built-in API-key User-Agent; OAuth and custom providers retain their identities. */
   readonly userAgent?: string;

@@ -483,6 +483,15 @@ export const providerRoutingSettings = pgTable(
     creditLimitEnabled: boolean("credit_limit_enabled").notNull().default(true),
     /** Minimum credits to keep unused on every account; default 200. */
     creditLimit: integer("credit_limit").notNull().default(200),
+    /**
+     * Minimum remaining allowance an account must hold to stay routable; `null`
+     * means no floor. Distinct from `creditLimit`, which is a fixed absolute
+     * threshold applied to every account: the floor can be expressed in percent,
+     * which is the only reading a utilization-only provider exposes.
+     */
+    usageFloor: integer("usage_floor"),
+    /** Which reading `usageFloor` compares: absolute credit or percent. */
+    usageFloorUnit: text("usage_floor_unit").$type<"credit" | "percent">().notNull().default("percent"),
     enabled: boolean("enabled").notNull().default(false),
     // Route-selected User-Agent for built-in API-key providers; OAuth and BYOK identities stay native.
     userAgent: text("user_agent").notNull().default("codex_cli_rs/0.156.1"),
@@ -588,6 +597,10 @@ export const apiKeys = pgTable(
     lifetimeTokensConsumed: bigint("lifetime_tokens_consumed", { mode: "number" })
       .notNull()
       .default(0),
+    /** Absolute expiry for this credential; null means it does not expire. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    /** Preset that provisioned this personal key; updates require explicit sync. */
+    modelTemplateId: uuid("model_template_id"),
     maxConcurrentRequests: integer("max_concurrent_requests"),
     /**
      * `whitelist` = only the names in `modelList` may be used (empty = all);
@@ -643,6 +656,22 @@ export const apiKeys = pgTable(
 );
 
 export type ApiKey = typeof apiKeys.$inferSelect;
+
+/** Tenant-owned named model whitelist presets. */
+export const modelTemplates = pgTable(
+  "model_templates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    tenantId: tenantRefRequired(),
+    name: text("name").notNull(),
+    modelList: jsonb("model_list").notNull().$type<readonly string[]>(),
+    createdAt: createdAtColumn(),
+  },
+  (table) => [
+    uniqueIndex("model_templates_tenant_name_uidx").on(table.tenantId, table.name),
+    index("model_templates_tenant_id_idx").on(table.tenantId),
+  ],
+);
 
 
 // Public bearer links for enrolling one shared key per resolved client IP, and

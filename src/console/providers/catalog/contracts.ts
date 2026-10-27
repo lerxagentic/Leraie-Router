@@ -5,6 +5,7 @@
 import { GatewayError } from "../../../transport/gateway-error";
 import { type ServiceKind, type WireFamily, SERVICE_KINDS, WIRE_FAMILIES } from "../../../transport/canonical-model";
 import { type ProviderRoutingSetting, type ProviderRoutingStrategy } from "../../../transport/routing/route-model";
+import type { UsageFloorUnit } from "../../../transport/routing/usage-floor";
 import { isProtectedHeader } from "../../../security/outbound-headers";
 import type { AccountHealthEventRecord } from "../../../providers/operations/account-health-service";
 import type { CompatibilityProfile } from "../../../providers/provider-metadata";
@@ -668,6 +669,14 @@ export interface ProviderRoutingResponse {
   readonly creditLimitEnabled: boolean;
   /** Minimum remaining credits to keep globally; default 200. */
   readonly creditLimit: number;
+  /**
+   * Minimum remaining allowance an account must hold to stay routable; `null`
+   * means no floor. Unlike `creditLimit`, the floor can be expressed in percent,
+   * which is the only reading a utilization-only provider exposes.
+   */
+  readonly usageFloor: number | null;
+  /** Which reading `usageFloor` compares: absolute credit or percent. */
+  readonly usageFloorUnit: UsageFloorUnit;
   readonly enabled: boolean;
   /** When true, this provider's requests always dial direct. When false,
    * dispatch automatically picks the least-loaded, non-cooldown pool among

@@ -10,6 +10,14 @@ export interface ProviderQuotaWindow {
   readonly limit?: number | null;
   /** Absolute remaining credits/value when the upstream reports it. */
   readonly remaining?: number | null;
+  /**
+   * Whether this window contributes to a shared credit balance or stands alone
+   * as its own quota. Optional: providers that never classify a window are
+   * inferred by shape (an absolute limit/remaining pair is pooled credit, a
+   * percentage-only window is independent). Stated explicitly when a provider
+   * exposes both, such as a credit pack plus a 5-hour rate limit.
+   */
+  readonly accounting?: "pooled" | "independent";
   /** False means the timestamp is a hard expiry rather than a recurring reset. */
   readonly recurring?: boolean;
 }
@@ -58,6 +66,67 @@ export function totalRemainingCredit(
     total = (total ?? 0) + clamped;
   }
   return total;
+}
+
+/**
+ * Remaining allowance across the windows a provider explicitly classifies as
+ * `pooled`, in absolute units, or `null` when no pooled window reports one.
+ *
+ * The usage floor reads this rather than `totalRemainingCredit`: a rate-limit
+ * window that also reports `used`/`limit` (WorkBuddy's monthly allowance) is not
+ * a spendable balance, and counting it as credit would park an account whose
+ * bonus packs still carry traffic.
+ */
+export function pooledRemainingCredit(
+  windows: readonly ProviderQuotaWindow[],
+): number | null {
+  let total: number | null = null;
+  for (const window of windows) {
+    if (window.accounting !== "pooled") continue;
+    const balance = pooledWindowBalance(window);
+    if (balance === null) continue;
+    total = (total ?? 0) + balance.remaining;
+  }
+  return total;
+}
+
+/**
+ * The same pooled allowance expressed as a percentage, or `null` when no pooled
+ * window reports a usable limit.
+ */
+export function pooledRemainingPercent(
+  windows: readonly ProviderQuotaWindow[],
+): number | null {
+  let limit = 0;
+  let remaining = 0;
+  for (const window of windows) {
+    if (window.accounting !== "pooled") continue;
+    const balance = pooledWindowBalance(window);
+    if (balance === null) continue;
+    limit += balance.limit;
+    remaining += balance.remaining;
+  }
+  if (limit <= 0) return null;
+  return Math.min(100, Math.max(0, (remaining / limit) * 100));
+}
+
+/** Absolute limit/remaining of one pooled window, or `null` when it reports none. */
+function pooledWindowBalance(
+  window: ProviderQuotaWindow,
+): { readonly limit: number; readonly remaining: number } | null {
+  const limit =
+    typeof window.limit === "number" && Number.isFinite(window.limit) && window.limit > 0
+      ? window.limit
+      : null;
+  if (limit === null) return null;
+  let remaining: number | null = null;
+  if (typeof window.remaining === "number" && Number.isFinite(window.remaining)) {
+    remaining = window.remaining;
+  } else if (typeof window.used === "number" && Number.isFinite(window.used)) {
+    remaining = limit - window.used;
+  }
+  if (remaining === null) return null;
+  return { limit, remaining: Math.min(limit, Math.max(0, remaining)) };
 }
 
 const TIMEOUT_MS = 15_000;

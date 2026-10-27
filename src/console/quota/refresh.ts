@@ -45,6 +45,16 @@ export interface QuotaRefreshDeps {
   readonly markApiKeyCredential?: (providerId: string, credential: string) => string;
   /** Invalidates the route snapshot when a stamped figure may exclude an account. */
   readonly snapshotInvalidator?: { invalidate(): unknown } | undefined;
+  /**
+   * Optional tenant-scoped egress resolver. Quota calls are provider traffic,
+   * not control-plane traffic: they must honour the same pool policy as chat
+   * dispatch rather than leaking out directly from the router host.
+   */
+  readonly quotaFetcherFor?: (
+    accountId: string,
+    tenantId: string | null | undefined,
+    providerId: string,
+  ) => Promise<FetchLike>;
 }
 
 /**
@@ -304,8 +314,11 @@ async function runQuotaRefresh(
         ? (deps.markApiKeyCredential?.(target.providerId, credential) ?? credential)
         : credential;
     try {
+      const quotaFetcher = deps.quotaFetcherFor
+        ? await deps.quotaFetcherFor(target.accountId, target.tenantId, target.providerId)
+        : fetcher;
       const authState = record(target.authState);
-      quota = await fetchProviderQuota(deps.providerRegistry, target.providerId, marked, fetcher, {
+      quota = await fetchProviderQuota(deps.providerRegistry, target.providerId, marked, quotaFetcher, {
         ...(authState === undefined ? {} : { auth_state: authState }),
         ...(target.credentialKind === null || target.credentialKind === undefined
           ? {}

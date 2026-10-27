@@ -7,6 +7,7 @@ import type {
 } from "../../provider-registry";
 import { resolveInboundSessionId } from "../../operations/session-resolution";
 import { buildCodeBuddyUserAgent } from "../../operations/client-versions";
+import { buddyConversationHeaders } from "./buddy-conversation-headers";
 
 /** Client identity variant behind the per-request CodeBuddy headers. */
 export type CodeBuddyVariant = "IDE" | "CLI";
@@ -37,8 +38,7 @@ export async function codebuddyHeaders(
     "X-Domain": codebuddyDomain(variant),
     "x-requested-with": "XMLHttpRequest",
     "x-codebuddy-request": "1",
-    "x-conversation-id": resolveInboundSessionId(context, request) ?? crypto.randomUUID(),
-    "x-request-id": crypto.randomUUID().replaceAll("-", ""),
+    ...buddyConversationHeaders(resolveInboundSessionId(context, request)),
   };
 }
 

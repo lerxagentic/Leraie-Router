@@ -34,6 +34,9 @@ export interface ApiKeyRecord {
   readonly dailyTokenLimit?: number;
   readonly monthlyTokenLimit?: number;
   readonly lifetimeTokenBudget?: number;
+  readonly expiresAt?: Date;
+  /** Preset that provisioned this key; a template edit only reaches it on explicit sync. */
+  readonly modelTemplateId?: string;
   readonly maxConcurrentRequests?: number;
   readonly modelPrefix?: string;
   readonly modelAccessMode?: ApiKeyModelAccessMode;
@@ -77,6 +80,8 @@ export interface ApiKeyPatch
     | "monthlyTokenLimit"
     | "lifetimeTokenBudget"
     | "maxConcurrentRequests"
+    | "expiresAt"
+    | "modelTemplateId"
   > {
   readonly keyHash?: string | null;
   readonly keyEncrypted?: Buffer | null;
@@ -95,6 +100,8 @@ export interface ApiKeyPatch
   readonly monthlyTokenLimit?: number | null;
   readonly lifetimeTokenBudget?: number | null;
   readonly maxConcurrentRequests?: number | null;
+  readonly expiresAt?: Date | null;
+  readonly modelTemplateId?: string | null;
 }
 
 /** Explicit persistence boundary. Production must provide this; there is no fallback store. */
@@ -143,6 +150,8 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
       ...(row.dailyTokenLimit === null ? {} : { dailyTokenLimit: row.dailyTokenLimit }),
       ...(row.monthlyTokenLimit === null ? {} : { monthlyTokenLimit: row.monthlyTokenLimit }),
       ...(row.lifetimeTokenBudget === null ? {} : { lifetimeTokenBudget: row.lifetimeTokenBudget }),
+      ...(row.expiresAt === null ? {} : { expiresAt: row.expiresAt }),
+      ...(row.modelTemplateId === null ? {} : { modelTemplateId: row.modelTemplateId }),
       ...(row.maxConcurrentRequests === null
         ? {}
         : { maxConcurrentRequests: row.maxConcurrentRequests }),
@@ -248,6 +257,8 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
       modelList: record.modelList ?? null,
       clientRouterDenylist: record.clientRouterDenylist ?? null,
       lifetimeTokensConsumed: record.tokensConsumed,
+      expiresAt: record.expiresAt ?? null,
+      modelTemplateId: record.modelTemplateId ?? null,
     });
   }
   async update(
@@ -316,6 +327,10 @@ export class DrizzleApiKeyStore implements ApiKeyStore {
             : {}),
           ...(patch.maxConcurrentRequests !== undefined
             ? { maxConcurrentRequests: patch.maxConcurrentRequests }
+            : {}),
+          ...(patch.expiresAt !== undefined ? { expiresAt: patch.expiresAt } : {}),
+          ...(patch.modelTemplateId !== undefined
+            ? { modelTemplateId: patch.modelTemplateId }
             : {}),
           ...(patch.modelPrefix !== undefined ? { modelPrefix: patch.modelPrefix } : {}),
           ...(patch.modelAccessMode !== undefined ? { modelAccessMode: patch.modelAccessMode } : {}),

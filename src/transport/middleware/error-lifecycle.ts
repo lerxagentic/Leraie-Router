@@ -10,6 +10,7 @@ import { computeTokensPerSec } from "../../observability/token-speed";
 import { pushStructuredConsoleLog } from "../../observability/log-ring";
 import type { ConsoleLogLevel, ConsoleLogMetadata } from "../../observability/log-ring";
 import { isProxyDispatchRoute } from "./body-policy";
+import { log } from "../../observability/logger";
 
 interface ElysiaBuiltinError {
   readonly status?: number;
@@ -87,6 +88,18 @@ export function createErrorNormalizationMiddleware(deps: {
                 isBuiltinError ? builtin?.message ?? "Unable to process request" : "Internal server error",
               );
       const origin = gateway?.origin ?? "cartethyia";
+      // Typed gateway errors already carry a client-safe category. An untyped
+      // 5xx is a gateway defect; retain its stack in the server log with only
+      // request metadata so it can be fixed rather than collapsing silently
+      // into an opaque `internal_error` for both client and operator.
+      if (status >= 500 && !gateway && !isBuiltinError) {
+        const unexpected = error instanceof Error ? error : new Error(String(error));
+        log.error("[transport] unexpected request error", unexpected, {
+          requestId: state?.requestId,
+          method: request.method,
+          path: new URL(request.url).pathname,
+        });
+      }
       // `afterResponse` telemetry hook can enqueue it even when the request
       // never reached canonical parse / auth / preparation.
       if (state && !state.outcome) {

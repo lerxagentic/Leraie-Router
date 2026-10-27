@@ -48,10 +48,14 @@ export interface CreateApiKeyRequest {
   dailyTokenLimit?: number | null;
   monthlyTokenLimit?: number | null;
   lifetimeTokenBudget?: number | null;
+  /** ISO timestamp; null explicitly clears an existing expiry. */
+  expiresAt?: string | null;
   maxConcurrentRequests?: number | null;
   modelPrefix?: string;
   modelAccessMode?: ApiKeyModelAccessMode;
   modelList?: readonly string[];
+  /** Model-template id this key was provisioned from; null detaches it. */
+  modelTemplateId?: string | null;
   /** Client-router ids this key refuses; see `client-router-fingerprint.ts`. */
   clientRouterDenylist?: readonly string[];
   notesTitle?: string;
@@ -81,9 +85,12 @@ export interface ApiKeyResponse {
   readonly dailyTokenLimit?: number;
   readonly monthlyTokenLimit?: number;
   readonly lifetimeTokenBudget?: number;
+  readonly expiresAt?: string;
   readonly modelPrefix?: string;
   readonly modelAccessMode?: ApiKeyModelAccessMode;
   readonly modelList?: readonly string[];
+  /** Preset this key was provisioned from, if any; see the model-template domain. */
+  readonly modelTemplateId?: string;
   readonly clientRouterDenylist?: readonly string[];
   readonly maxConcurrentRequests?: number;
   readonly notesTitle?: string;
@@ -256,6 +263,9 @@ export function validateApiKeyRequest(request: CreateApiKeyRequest): readonly Ac
   finitePositive(request.dailyTokenLimit, "dailyTokenLimit");
   finitePositive(request.monthlyTokenLimit, "monthlyTokenLimit");
   finitePositive(request.lifetimeTokenBudget, "lifetimeTokenBudget");
+  if (request.expiresAt !== undefined && request.expiresAt !== null && Number.isNaN(new Date(request.expiresAt).getTime())) {
+    throw new ConsoleDomainError("invalid_expiry", 400, "expiresAt must be a valid ISO timestamp");
+  }
   finitePositive(request.maxConcurrentRequests, "maxConcurrentRequests");
   parseSharePopupImage(request.sharePopupImage);
   if (request.sharePopupTitle != null && request.sharePopupTitle.length > 120) {
@@ -318,6 +328,7 @@ export function sanitizeApiKeyResponse(record: ApiKeyRecord): ApiKeyResponse {
     scopes: record.scopes,
     ...(record.keyPrefix === undefined ? {} : { keyPrefix: record.keyPrefix }),
     ...(record.parentKeyId === undefined ? {} : { parentKeyId: record.parentKeyId }),
+    ...(record.expiresAt === undefined ? {} : { expiresAt: record.expiresAt.toISOString() }),
     ...(record.notesTitle === undefined ? {} : { notesTitle: record.notesTitle }),
     ...(record.notesSubtitle === undefined ? {} : { notesSubtitle: record.notesSubtitle }),
     ...(record.notesBody === undefined ? {} : { notesBody: record.notesBody }),
@@ -335,6 +346,7 @@ export function sanitizeApiKeyResponse(record: ApiKeyRecord): ApiKeyResponse {
     ...(record.modelPrefix === undefined ? {} : { modelPrefix: record.modelPrefix }),
     ...(record.modelAccessMode === undefined ? {} : { modelAccessMode: record.modelAccessMode }),
     ...(record.modelList === undefined ? {} : { modelList: record.modelList }),
+    ...(record.modelTemplateId === undefined ? {} : { modelTemplateId: record.modelTemplateId }),
     ...(record.clientRouterDenylist === undefined
       ? {}
       : { clientRouterDenylist: record.clientRouterDenylist }),

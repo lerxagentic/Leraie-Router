@@ -3,6 +3,8 @@ import { ConsoleDomainError } from "./shared/errors";
 import { createCliToolsRoutes } from "./cli-tools/routes";
 import { createAccountQuotaRoutes } from "./quota/account-quota";
 import { createApiKeyRoutes } from "./domains/api-keys/routes";
+import { createModelTemplateRoutes } from "./domains/model-templates/routes";
+import { DrizzleModelTemplateStore } from "../persistence/model-template-store";
 import { familyBucketSpend } from "./domains/api-keys/bucket-spend";
 import { createProviderCatalogRoutes } from "./providers/catalog/routes";
 import {
@@ -70,6 +72,7 @@ import type { RedisClient } from "../persistence/redis";
 import type { ProviderRegistry } from "../providers/provider-registry";
 import type { BundledProviderCatalog } from "../providers/operations/provider-catalog-service";
 import type { ValidatedNetworkBindingFactory } from "../network/pool/resolver";
+import { createQuotaEgressFetcher } from "./quota/account-test-egress";
 import type { CartethyiaDatabase } from "../persistence/postgres";
 import type { ConsoleAccessResolver } from "./auth/access";
 
@@ -208,10 +211,16 @@ export function registerConsoleDomains(
       ctx.readRoutingAccountInflight ? ctx.readRoutingAccountInflight(providerId, tenantId) : [],
   });
   const providerDetailStore = new DrizzleProviderDetailStore(ctx.db);
+  const quotaEgress = createQuotaEgressFetcher({
+    db: ctx.db,
+    poolSelector: ctx.poolSelector,
+    networkBindingFactory: ctx.networkBindingFactory,
+  });
   const networkPoolStore = new DrizzleNetworkPoolStore(ctx.db, resolveSsrfPolicy());
   const runtimeSettingsStore = new DrizzleRuntimeSettingsStore(ctx.db);
   const modelRoutingStore = new DrizzleModelRoutingStore(ctx.db);
   const apiKeyStore = new DrizzleApiKeyStore(ctx.db);
+  const modelTemplateStore = new DrizzleModelTemplateStore(ctx.db);
   const shareStore = new DrizzleShareLinkStore(ctx.db);
   const shareActivity = createShareUsagePort(ctx.db);
 
@@ -311,6 +320,7 @@ export function registerConsoleDomains(
   );
   console.use(createModelRoutingRoutes({ store: modelRoutingStore, accessResolver: ctx.accessResolver, auditSink: ctx.auditRecorder, snapshotInvalidator: ctx.routeSnapshotService }));
   console.use(createApiKeyRoutes({ store: apiKeyStore, accessResolver: ctx.accessResolver, auditSink: ctx.auditRecorder, shareStore, shareActivity, admissionService: ctx.admissionService, bucketSpend: (keyId, now) => familyBucketSpend(ctx.db, keyId, now) }));
+  console.use(createModelTemplateRoutes({ store: modelTemplateStore, apiKeyStore, accessResolver: ctx.accessResolver, auditSink: ctx.auditRecorder }));
   console.use(createCliToolsRoutes({ service: ctx.cliToolService, accessResolver: ctx.accessResolver, auditSink: ctx.auditRecorder, snapshotInvalidator: ctx.routeSnapshotService }));
   console.use(createAccountQuotaRoutes({
     db: ctx.db,
@@ -320,6 +330,7 @@ export function registerConsoleDomains(
     snapshotInvalidator: ctx.routeSnapshotService,
     providerRegistry: ctx.providerRegistry,
     resolveCredential,
+    quotaFetcherFor: (accountId, tenantId, providerId) => quotaEgress(accountId, tenantId, providerId),
   }));
   // The listener binds the loopback port a browser redirect names, so the
   // callback delivers itself instead of waiting for a manual paste. One

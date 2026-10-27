@@ -87,6 +87,48 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
         if (!record) throw new ConsoleDomainError("key_not_found", 404, "Key not found");
         return sanitizeApiKeyResponse(record);
       },
+    /**
+     * Returns the stored plaintext for one personal key.
+     *
+     * A personal key keeps an encrypted copy for the Studio/CLI handoff, so the
+     * owner can legitimately read it back. A share template has no credential of
+     * its own and a child key stores only its hash, so those refuse rather than
+     * fabricate a value. The response never carries the ciphertext itself.
+     */
+    async revealKey(
+      access: AccessDecision | undefined,
+      keyId: string,
+    ): Promise<{ secret: string }> {
+      const authorized = requireTenantScope(access, "dashboard:write");
+      const record = await config.store.get(authorized.tenantId, keyId);
+      if (!record || record.revokedAt !== undefined)
+        throw new ConsoleDomainError("key_not_found", 404, "Key not found");
+      if (record.keyMode !== "personal" || record.keyEncrypted === undefined) {
+        throw new ConsoleDomainError(
+          "key_secret_unavailable",
+          409,
+          "This key has no recoverable secret; rotate it to receive a new one",
+        );
+      }
+      let secret: string;
+      try {
+        secret = decryptCredentialToString(record.keyEncrypted);
+      } catch {
+        // A row written under a different encryption key cannot be read back.
+        throw new ConsoleDomainError(
+          "key_secret_unavailable",
+          409,
+          "This key's secret cannot be decrypted with the current encryption key; rotate it",
+        );
+      }
+      await config.auditSink?.record({
+        access: authorized,
+        action: "api_key.revealed",
+        target: record.id,
+        detail: { label: record.label },
+      });
+      return { secret };
+    },
     async getSharePopupImage(
       access: AccessDecision | undefined,
       keyId: string,
@@ -135,10 +177,12 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
         ...(request.dailyTokenLimit == null ? {} : { dailyTokenLimit: request.dailyTokenLimit }),
         ...(request.monthlyTokenLimit == null ? {} : { monthlyTokenLimit: request.monthlyTokenLimit }),
         ...(request.lifetimeTokenBudget == null ? {} : { lifetimeTokenBudget: request.lifetimeTokenBudget }),
+        ...(request.expiresAt == null ? {} : { expiresAt: new Date(request.expiresAt) }),
         ...(request.maxConcurrentRequests == null ? {} : { maxConcurrentRequests: request.maxConcurrentRequests }),
         ...(request.modelPrefix === undefined ? {} : { modelPrefix: request.modelPrefix }),
         modelAccessMode: request.modelAccessMode ?? "whitelist",
         ...(request.modelList === undefined ? {} : { modelList: request.modelList }),
+        ...(request.modelTemplateId == null ? {} : { modelTemplateId: request.modelTemplateId }),
         ...(request.clientRouterDenylist === undefined
           ? {}
           : { clientRouterDenylist: request.clientRouterDenylist }),
@@ -249,10 +293,14 @@ export function createApiKeyOperations(config: ApiKeyConfig) {
         ...(patchRequest.dailyTokenLimit === undefined ? {} : { dailyTokenLimit: patchRequest.dailyTokenLimit }),
         ...(patchRequest.monthlyTokenLimit === undefined ? {} : { monthlyTokenLimit: patchRequest.monthlyTokenLimit }),
         ...(patchRequest.lifetimeTokenBudget === undefined ? {} : { lifetimeTokenBudget: patchRequest.lifetimeTokenBudget }),
+        ...(patchRequest.expiresAt === undefined ? {} : { expiresAt: patchRequest.expiresAt === null ? null : new Date(patchRequest.expiresAt) }),
         ...(patchRequest.maxConcurrentRequests === undefined ? {} : { maxConcurrentRequests: patchRequest.maxConcurrentRequests }),
         ...(patchRequest.modelPrefix === undefined ? {} : { modelPrefix: patchRequest.modelPrefix }),
         ...(patchRequest.modelAccessMode === undefined ? {} : { modelAccessMode: patchRequest.modelAccessMode }),
         ...(patchRequest.modelList === undefined ? {} : { modelList: patchRequest.modelList }),
+        ...(patchRequest.modelTemplateId === undefined
+          ? {}
+          : { modelTemplateId: patchRequest.modelTemplateId }),
         ...(patchRequest.clientRouterDenylist === undefined
           ? {}
           : { clientRouterDenylist: patchRequest.clientRouterDenylist }),
@@ -623,6 +671,7 @@ const apiKeyBody = t.Object({
   dailyTokenLimit: t.Optional(t.Union([t.Number(), t.Null()])),
   monthlyTokenLimit: t.Optional(t.Union([t.Number(), t.Null()])),
   lifetimeTokenBudget: t.Optional(t.Union([t.Number(), t.Null()])),
+  expiresAt: t.Optional(t.Union([t.String(), t.Null()])),
   maxConcurrentRequests: t.Optional(t.Union([t.Number(), t.Null()])),
   modelPrefix: t.Optional(t.String()),
   modelAccessMode: t.Optional(literalUnion(API_KEY_MODEL_ACCESS_MODES)),
@@ -682,6 +731,13 @@ export function createApiKeyRoutes(config: ApiKeyConfig): Elysia {
     .get("/:keyId", async ({ request, params, set }) => {
       try {
         return await factory.getKeyDetail(config.accessResolver(request), params.keyId);
+      } catch (error) {
+        return errorResponse(error, set, "API-key operation failed");
+      }
+    })
+    .get("/:keyId/reveal", async ({ request, params, set }) => {
+      try {
+        return await factory.revealKey(config.accessResolver(request), params.keyId);
       } catch (error) {
         return errorResponse(error, set, "API-key operation failed");
       }

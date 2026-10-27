@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { useModelTemplates } from "../hooks/model-templates";
 import { Switch } from "./ui/switch";
 import { ModelPickerModal } from "./ModelPicker";
 import { useResetToolMappings, useSaveToolMappings, useToolMappings, useToolRegistry } from "../hooks/cli-tools";
@@ -76,6 +77,29 @@ function parseLimitOrNull(value: string): number | null | undefined {
   const n = parseLimit(value);
   // Empty input clears an existing limit; a parsed value is kept.
   return value.trim() === "" ? null : n;
+}
+
+/**
+ * Converts the form's calendar date into the instant the key stops working.
+ *
+ * Expiry is inclusive at the day level for the operator: picking today means
+ * "valid until the end of today", not "already expired this morning". An empty
+ * value clears the expiry so the key never expires.
+ */
+export function expiryIso(dateValue: string): string | null {
+  const raw = dateValue.trim();
+  if (!raw) return null;
+  const parsed = new Date(`${raw}T23:59:59.999`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+/** `YYYY-MM-DD` for a day `days` from today, used by the expiry quick picks. */
+export function expiryDateFromNow(days: number, now = new Date()): string {
+  const target = new Date(now.getTime());
+  target.setDate(target.getDate() + days);
+  const month = String(target.getMonth() + 1).padStart(2, "0");
+  const day = String(target.getDate()).padStart(2, "0");
+  return `${target.getFullYear()}-${month}-${day}`;
 }
 
 /** Token limit input with 1M/100M/1B/1T quick-pick presets. */
@@ -283,6 +307,8 @@ export interface KeyFormInput {
   key?: string;
   modelAccessMode: "whitelist" | "blacklist";
   modelList: string[];
+  /** Model template this key is provisioned from; null detaches it. */
+  modelTemplateId?: string | null;
   clientRouterDenylist: string[];
   scopes: string[];
   requestsPerMinute?: number | null;
@@ -290,6 +316,8 @@ export interface KeyFormInput {
   dailyTokenLimit?: number | null;
   monthlyTokenLimit?: number | null;
   lifetimeTokenBudget?: number | null;
+  /** `YYYY-MM-DD` local calendar date; null means the key never expires. */
+  expiresAt?: string | null;
   notesTitle?: string;
   notesSubtitle?: string;
   notesBody?: string;
@@ -348,6 +376,11 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
       : "recurring",
   );
   const [concurrent, setConcurrent] = useState(record?.maxConcurrentRequests?.toString() ?? "");
+  // Expiry is edited as a local calendar date: the operator thinks in days, not
+  // instants. An empty value means the key does not expire.
+  const [expiresAt, setExpiresAt] = useState(() =>
+    record?.expiresAt ? record.expiresAt.slice(0, 10) : "",
+  );
   const [scopes, setScopes] = useState<string[]>(() => {
     const s = (record as unknown as { scopes?: string[] })?.scopes;
     return s && s.length ? [...s] : ["routing:invoke", "search:invoke"];
@@ -361,6 +394,13 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
     return m ? [...m] : [];
   });
   const [pickerOpen, setPickerOpen] = useState(false);
+  // The preset this key was provisioned from, if any. Choosing one copies its
+  // models now; a later template edit only reaches the key through an explicit
+  // sync, so a live credential never changes its access behind the operator.
+  const [modelTemplateId, setModelTemplateId] = useState<string | null>(
+    (record as unknown as { modelTemplateId?: string | null })?.modelTemplateId ?? null,
+  );
+  const templatesQuery = useModelTemplates();
   const [blockedRouters, setBlockedRouters] = useState<string[]>(() => {
     const list = (record as unknown as { clientRouterDenylist?: string[] | null })
       ?.clientRouterDenylist;
@@ -414,12 +454,14 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
       scopes,
       modelAccessMode,
       modelList: models,
+      modelTemplateId,
       clientRouterDenylist: blockedRouters,
       requestsPerMinute: parseLimitOrNull(rpm),
       maxConcurrentRequests: parseLimitOrNull(concurrent),
       dailyTokenLimit: isOneTime ? null : (parseTokenLimit(daily) ?? null),
       monthlyTokenLimit: isOneTime ? null : (parseTokenLimit(monthly) ?? null),
       lifetimeTokenBudget: isOneTime ? (parseTokenLimit(lifetime) ?? null) : null,
+      expiresAt: expiryIso(expiresAt),
       notesTitle: notesTitle.trim(),
       notesSubtitle: notesSubtitle.trim(),
       notesBody: notesBody.trim(),
@@ -654,6 +696,54 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
         )}
       </section>
       </div>
+      <section className="api-key-form-section api-key-form-section-wide">
+        <div>
+          <h3 style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-primary)" }}>
+            Expiry
+          </h3>
+          <p style={{ marginTop: "2px", fontSize: "11px", color: "var(--text-tertiary)" }}>
+            The key stops authenticating after this date, together with any share
+            keys issued from it. Leave empty for a key that never expires.
+          </p>
+        </div>
+        <div className="api-key-form-grid">
+          <Input
+            label="Expires on"
+            type="date"
+            value={expiresAt}
+            onChange={(event) => setExpiresAt(event.target.value)}
+            disabled={busy}
+          />
+          <div className="form-group">
+            <span className="form-label" aria-hidden="true">
+              <span>Quick pick</span>
+            </span>
+            <div style={{ display: "flex", alignItems: "center", gap: "6px", minHeight: "36px" }}>
+              {[7, 30, 90].map((days) => (
+                <Button
+                  key={days}
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => setExpiresAt(expiryDateFromNow(days))}
+                >
+                  {days}d
+                </Button>
+              ))}
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={busy || expiresAt === ""}
+                onClick={() => setExpiresAt("")}
+              >
+                Clear
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
       <section className="api-key-form-section api-key-form-section-wide" aria-labelledby="share-popup-heading">
         <div className="api-key-popup-header">
           <div>
@@ -791,6 +881,45 @@ export function ApiKeyForm({ mode, record, busy, onDone, onClose }: KeyFormProps
                 {option === "whitelist" ? "Whitelist" : "Blacklist"}
               </button>
             ))}
+          </div>
+          <div style={{ marginBottom: "10px" }}>
+            <label
+              htmlFor="api-key-model-template"
+              style={{
+                fontSize: "11px",
+                fontWeight: 600,
+                color: "var(--text-secondary)",
+                display: "block",
+                marginBottom: "4px",
+              }}
+            >
+              Model template
+            </label>
+            <select
+              id="api-key-model-template"
+              className="form-input"
+              value={modelTemplateId ?? ""}
+              disabled={busy}
+              onChange={(event) => {
+                const templateId = event.target.value || null;
+                setModelTemplateId(templateId);
+                // Choosing a preset copies its models into this form now. An
+                // existing key keeps its own list until a template sync runs.
+                const template = templatesQuery.data?.find((entry) => entry.id === templateId);
+                if (template) setModels([...template.modelList]);
+              }}
+            >
+              <option value="">No template (manual list)</option>
+              {(templatesQuery.data ?? []).map((template) => (
+                <option key={template.id} value={template.id}>
+                  {template.name} ({template.modelList.length} models)
+                </option>
+              ))}
+            </select>
+            <p style={{ marginTop: "4px", fontSize: "10.5px", color: "var(--text-tertiary)" }}>
+              Picking a template copies its models into this key. Editing the template later
+              only reaches this key when you run a template sync.
+            </p>
           </div>
           <label
             style={{

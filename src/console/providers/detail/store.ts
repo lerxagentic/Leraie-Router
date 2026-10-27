@@ -16,6 +16,8 @@ function mapRow(row: typeof providerRoutingSettings.$inferSelect): ProviderRouti
     maxInflight: row.maxInflight,
     creditLimitEnabled: row.creditLimitEnabled,
     creditLimit: row.creditLimit,
+    usageFloor: row.usageFloor,
+    usageFloorUnit: row.usageFloorUnit === "credit" ? "credit" : "percent",
     enabled: row.enabled,
     bypassProxy: row.bypassProxy,
     assignedPoolId: row.assignedPoolId,
@@ -69,6 +71,8 @@ export class DrizzleProviderDetailStore implements ProviderDetailStore {
       maxInflight: null,
       creditLimitEnabled: true,
       creditLimit: 200,
+      usageFloor: null,
+      usageFloorUnit: "percent",
       enabled: false,
       bypassProxy: DEFAULT_PROXY_BYPASS_PROVIDER_IDS.has(providerId),
       userAgent: DEFAULT_PROVIDER_USER_AGENT,
@@ -90,6 +94,8 @@ export class DrizzleProviderDetailStore implements ProviderDetailStore {
       maxInflight: patch.maxInflight ?? null,
       creditLimitEnabled: patch.creditLimitEnabled ?? true,
       creditLimit: patch.creditLimit ?? 200,
+      usageFloor: patch.usageFloor ?? null,
+      usageFloorUnit: patch.usageFloorUnit ?? "percent",
       enabled: patch.enabled ?? false,
       bypassProxy: patch.bypassProxy ?? true,
       assignedPoolId: patch.assignedPoolId ?? null,
@@ -101,6 +107,8 @@ export class DrizzleProviderDetailStore implements ProviderDetailStore {
     if (patch.maxInflight !== undefined) setClause.maxInflight = patch.maxInflight;
     if (patch.creditLimitEnabled !== undefined) setClause.creditLimitEnabled = patch.creditLimitEnabled;
     if (patch.creditLimit !== undefined) setClause.creditLimit = patch.creditLimit;
+    if (patch.usageFloor !== undefined) setClause.usageFloor = patch.usageFloor;
+    if (patch.usageFloorUnit !== undefined) setClause.usageFloorUnit = patch.usageFloorUnit;
     if (patch.enabled !== undefined) setClause.enabled = patch.enabled;
     if (patch.bypassProxy !== undefined) setClause.bypassProxy = patch.bypassProxy;
     if (patch.assignedPoolId !== undefined) setClause.assignedPoolId = patch.assignedPoolId;

@@ -22,6 +22,8 @@ import {
 } from "./route-model";
 import { candidateSupportsRequest, type RequiredCapability } from "../translation/capabilities";
 import { isProviderCircuitOpen } from "./provider-circuit";
+import { belowUsageFloor, type UsageFloorPolicy } from "./usage-floor";
+import type { ProviderQuotaWindow } from "../../providers/quota/quota-contracts";
 
 
 /**
@@ -482,6 +484,16 @@ export class RoutingEngine {
 
   constructor(
     private readonly admission: AdmissionController = new InMemoryAdmissionController(),
+    /**
+     * Cached quota windows for one account, or `undefined` when nothing has been
+     * fetched yet. Injected rather than imported so the engine stays free of the
+     * quota cache's Redis handle, and so a deployment without a quota sweep keeps
+     * routing exactly as before.
+     */
+    private readonly quotaWindowsFor?: (
+      accountId: string,
+      tenantId: string | null,
+    ) => Promise<readonly ProviderQuotaWindow[] | undefined>,
   ) {}
 
   private getRoundRobin(key: string): RoundRobinState {
@@ -591,6 +603,31 @@ export class RoutingEngine {
     // the `matching.length === 0` throw in the resolver, which is a genuine 404.
     const decisions = matching.map((candidate) => this.eligibility.evaluate(candidate));
     let eligible = decisions.filter((d) => d.eligible).map((d) => d.candidate);
+    // Usage floor: an account whose remaining allowance is at or below its
+    // provider's floor is dropped here, before ordering, so the request fails
+    // over to a sibling instead of spending the balance the operator kept back.
+    // Reads the same cached quota windows the console shows.
+    if (this.quotaWindowsFor !== undefined && eligible.length > 0) {
+      const floors = await Promise.all(
+        eligible.map(async (candidate) => {
+          const accountId = candidate.provider_account_id;
+          const policy: UsageFloorPolicy | undefined =
+            candidate.usage_floor === undefined
+              ? undefined
+              : { floor: candidate.usage_floor, unit: candidate.usage_floor_unit ?? "percent" };
+          if (accountId === undefined) return { candidate, below: false };
+          const windows =
+            candidate.quota_windows ??
+            (await this.quotaWindowsFor?.(accountId, candidate.tenant_id ?? tid));
+          return { candidate, below: belowUsageFloor(policy, windows) };
+        }),
+      );
+      const aboveFloor = floors.filter((entry) => !entry.below).map((entry) => entry.candidate);
+      // Never fail a request that only has floor-crossing accounts: the floor is
+      // a preference to preserve balance, not a hard stop. Keeping them routable
+      // means a spent-out deployment still answers instead of returning 503.
+      if (aboveFloor.length > 0) eligible = aboveFloor;
+    }
     if (eligible.length === 0) {
       const hardCooling = decisions.some((d) => d.reason === "cooldown_hard");
       if (hardCooling) {

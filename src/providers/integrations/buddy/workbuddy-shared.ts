@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 
 import type { OpenAICompatibleAdapterConfig } from "../../compatible-adapter";
 import { withBearerAuthentication } from "../../compatible-adapter";
@@ -14,6 +14,7 @@ import {
   getWorkBuddyClientVersion,
   getWorkBuddyCliVersion,
 } from "../../operations/client-versions";
+import { buddyConversationHeaders } from "./buddy-conversation-headers";
 
 /**
  * WorkBuddy serves chat from a versioned path on a base URL that carries no
@@ -80,8 +81,7 @@ export async function workbuddyHeaders(
     // explicitly so upstream risk control does not treat the omission as
     // suspicious.
     "x-no-enterprise-id": "1",
-    "x-conversation-id": resolveInboundSessionId(context, request) ?? randomUUID(),
-    "x-request-id": randomUUID().replaceAll("-", ""),
+    ...buddyConversationHeaders(resolveInboundSessionId(context, request)),
   };
   const accountId = context?.credential.account_id;
   if (accountId) {
