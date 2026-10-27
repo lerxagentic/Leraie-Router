@@ -81,6 +81,10 @@ export const queryKeys = {
     account: (accountId: string) => ["console", "quota", "account", accountId] as const,
     resets: (accountId: string) => ["console", "quota", "account", accountId, "resets"] as const,
   },
+  inferhub: {
+    summary: ["console", "inferhub", "summary"] as const,
+    models: (prefix: string | undefined) => ["console", "inferhub", "models", prefix] as const,
+  },
   studio: {
     sessions: ["console", "studio", "sessions"] as const,
     session: (sessionId: string) => ["console", "studio", "sessions", sessionId] as const,
