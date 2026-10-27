@@ -7,6 +7,8 @@ import { createModelTemplateRoutes } from "./domains/model-templates/routes";
 import { DrizzleModelTemplateStore } from "../persistence/model-template-store";
 import { familyBucketSpend } from "./domains/api-keys/bucket-spend";
 import { createProviderCatalogRoutes } from "./providers/catalog/routes";
+import { createInferhubRoutes } from "./inferhub/routes";
+import { createInferhubKeyStore } from "./inferhub/key-store";
 import {
   createProviderDetailRoutes,
 } from "./providers/detail/routes";
@@ -252,6 +254,12 @@ export function registerConsoleDomains(
   console.use(createLogRoutes({ accessResolver: ctx.accessResolver, auditSink: ctx.auditRecorder }));
   console.use(createPerformanceRoutes({ accessResolver: ctx.accessResolver }));
   console.use(createAuditRoutes({ store: auditReadStore, accessResolver: ctx.accessResolver }));
+  const inferhubKeys = createInferhubKeyStore(ctx.db);
+  console.use(createInferhubRoutes({
+    accessResolver: ctx.accessResolver,
+    resolveConfigKey: () => inferhubKeys.read(),
+    keyStore: inferhubKeys,
+  }));
   console.use(createSecurityRoutes({
     db: ctx.db,
     strikes: ctx.modelStrikes,
