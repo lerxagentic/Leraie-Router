@@ -25,11 +25,9 @@ import { metrics } from "../../src/observability/metrics";
 function makeSampler(): RuntimeMetricsSampler {
   return new RuntimeMetricsSampler({
     routingRoundRobinEntries: () => ({ combo: 0, provider: 0 }),
+    poolAgentEntries: () => 0,
     ipAbuseKeys: () => 0,
     quotaCacheEntries: () => 0,
-    modelCatalogEntries: () => 0,
-    inFlight: () => 0,
-    telemetryBacklog: () => undefined,
   });
 }
 

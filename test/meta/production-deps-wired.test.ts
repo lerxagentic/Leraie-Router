@@ -25,7 +25,7 @@ import { join } from "node:path";
 
 const MAIN_TS = readFileSync(join(import.meta.dir, "..", "..", "src", "main.ts"), "utf8");
 const DEPENDENCIES_TS = readFileSync(
-  join(import.meta.dir, "..", "..", "src", "boot", "dependencies.ts"),
+  join(import.meta.dir, "..", "..", "src", "runtime", "dependencies.ts"),
   "utf8",
 );
 

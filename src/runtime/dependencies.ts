@@ -101,6 +101,7 @@ export interface ProductionDeps {
   admissionService: ApiKeyAdmissionService;
   /** Graduated strikes for repeated invalid-model requests. */
   modelStrikes: ModelStrikeService;
+  runtimeMetricsSampler: RuntimeMetricsSampler;
 }
 
 /**
@@ -415,6 +416,7 @@ export async function buildProductionDeps(): Promise<ProductionDeps> {
     modelStrikes,
     readiness,
     scheduledTasks,
+    runtimeMetricsSampler,
     poolAgentResolver,
     telemetryBuffer,
     poolSelector,

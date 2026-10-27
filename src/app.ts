@@ -25,6 +25,7 @@ import type { ByokUpstreamHost } from "./providers/operations/provider-catalog-s
 import type { NetworkPoolSelector } from "./network/pool/selector";
 import type { ProxyRequestPreparer } from "./transport/request/preparer";
 import { ProxyRequestStateStore } from "./transport/request/state";
+import type { RuntimeMetricsSampler } from "./observability/runtime-metrics";
 import { fastPathname } from "./transport/request/pathname";
 import {
   handleProviderProxyRequest,
@@ -129,6 +130,7 @@ export interface ProductionAppDeps {
    */
   readonly scheduledTasks?: ScheduledTaskRegistry;
   readonly shutdownCoordinator: ShutdownCoordinatorLike;
+  readonly runtimeMetricsSampler?: RuntimeMetricsSampler;
   readonly dashboardDist?: string;
   readonly resolvePeerAddress?: (request: Request) => string | null;
   readonly maxBodyBytes?: number;
@@ -222,6 +224,9 @@ export function createGatewayApp(deps: GatewayAppDeps) {
 
   // Build the Elysia app with strict route ordering.
   const requestStateStore = new ProxyRequestStateStore(deps.shutdownCoordinator);
+  if (deps.mode === "production") {
+    deps.runtimeMetricsSampler?.bindInFlight(() => requestStateStore.activeCount());
+  }
   // Shutdown ordering: abort in-flight proxy controllers first so the
   // bounded drain observes cancellation and finalizers run before
   // telemetry flush and pool close. The reason is threaded through so the
@@ -344,6 +349,9 @@ export function createGatewayApp(deps: GatewayAppDeps) {
       trustedProxyBoundary: deps.trustedProxyBoundary,
       ...(deps.resolvePeerAddress ? { resolvePeerAddress: deps.resolvePeerAddress } : {}),
       ipAbuseProtection: deps.ipAbuseProtection,
+      ...(deps.runtimeMetricsSampler
+        ? { memorySnapshot: () => deps.runtimeMetricsSampler?.memorySnapshot() }
+        : {}),
       ...(deps.maxBodyBytes === undefined ? {} : { maxBodyBytes: deps.maxBodyBytes }),
       ...(deps.requestDeadlineMs === undefined ? {} : { requestDeadlineMs: deps.requestDeadlineMs }),
       ...(deps.verifiedHttps ? { verifiedHttps: true } : {}),

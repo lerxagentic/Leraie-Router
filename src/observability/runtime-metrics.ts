@@ -13,6 +13,12 @@ import { trackMemoryUsage } from "./performance-metrics";
 import { log } from "./logger";
 import { resolveMemoryLimitOverrideBytes } from "../config";
 
+export interface RuntimeMemorySnapshot {
+  readonly rssBytes: number;
+  readonly limitBytes: number | undefined;
+  readonly sampledAtMs: number;
+}
+
 /** Live collection sizes sampled alongside process memory. */
 export interface RuntimeMetricSources {
   readonly routingRoundRobinEntries: () => { readonly combo: number; readonly provider: number };
@@ -68,6 +74,16 @@ export class RuntimeMetricsSampler {
   private readonly gcOnPressure: boolean;
   private lastPressureLogAt = 0;
   private lastGcAt = 0;
+  private inFlightSource: () => number = () => 0;
+  private snapshot: RuntimeMemorySnapshot | undefined;
+
+  bindInFlight(source: () => number): void {
+    this.inFlightSource = source;
+  }
+
+  memorySnapshot(): RuntimeMemorySnapshot | undefined {
+    return this.snapshot;
+  }
 
   constructor(
     private readonly sources: RuntimeMetricSources,
@@ -84,6 +100,8 @@ export class RuntimeMetricsSampler {
     metrics.cartethyia_memory_heap_used_bytes.set(memory.heapUsed);
     metrics.cartethyia_memory_heap_total_bytes.set(memory.heapTotal);
     metrics.cartethyia_memory_limit_bytes.set(this.limitBytes ?? 0);
+    this.snapshot = { rssBytes: memory.rss, limitBytes: this.limitBytes, sampledAtMs: Date.now() };
+    metrics.cartethyia_process_in_flight.set(this.inFlightSource());
     trackMemoryUsage("rss", memory.rss);
     trackMemoryUsage("heap_used", memory.heapUsed);
     trackMemoryUsage("heap_total", memory.heapTotal);

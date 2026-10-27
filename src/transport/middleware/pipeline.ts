@@ -28,6 +28,8 @@ import type { CartethyiaDatabase } from "../../persistence/postgres";
 import type { TelemetryBatchBuffer } from "../../observability/telemetry-buffer";
 import type { ModelStrikeService } from "../../security/model-abuse";
 import { createProcessConcurrencyMiddleware } from "./process-concurrency-guard";
+import { createMemoryHeadroomMiddleware } from "./memory-headroom-guard";
+import type { RuntimeMemorySnapshot } from "../../observability/runtime-metrics";
 
 /** Shared state/context carried by every ordered transport stage. */
 export interface TransportPipelineContext {
@@ -51,6 +53,7 @@ export interface TransportPipelineContext {
     shutdownReason?(): string;
   };
   readonly telemetry?: TelemetryBatchBuffer;
+  readonly memorySnapshot?: () => RuntimeMemorySnapshot | undefined;
 }
 
 /**
@@ -105,6 +108,12 @@ export function createTransportPipeline(context: TransportPipelineContext): Tran
   ];
   const mountRoot = (app: Elysia<any, any, any, any, any, any, any, any>): void => {
     app.use(createProcessConcurrencyMiddleware());
+    app.use(
+      createMemoryHeadroomMiddleware({
+        stateStore: context.stateStore,
+        ...(context.memorySnapshot ? { memorySnapshot: context.memorySnapshot } : {}),
+      }),
+    );
     app.use(
       createRequestContextMiddleware({
         stateStore: context.stateStore,
