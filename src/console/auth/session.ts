@@ -67,6 +67,20 @@ export interface SetupResponse {
   readonly message?: string;
 }
 
+export interface SetupInspectResponse extends SetupResponse {
+  readonly format?: "native" | "nine_router";
+  readonly version?: number;
+  readonly exportedAt?: string;
+  readonly rows?: readonly {
+    readonly section: string;
+    readonly table: string;
+    readonly count: number;
+    readonly supported: boolean;
+  }[];
+  readonly total?: number;
+  readonly warnings?: readonly unknown[];
+}
+
 export interface LogoutResponse {
   readonly status: "success";
 }
@@ -335,6 +349,68 @@ export function createConsoleAuthRoutes(
         throw error;
       }
       return { status: "success", message: "Setup completed" } satisfies SetupResponse;
+    },
+  );
+
+  app.post(
+    "/setup/inspect",
+    {
+      body: t.Object({
+        backup: t.Unknown(),
+      }),
+    },
+    async ({ body, set }) => {
+      if (!(await setupService.requiresSetup())) {
+        set.status = 400;
+        return { status: "failed", message: "Setup already completed" } satisfies SetupResponse;
+      }
+      try {
+        return { status: "success", ...setupService.inspectBackup(body.backup) } satisfies SetupInspectResponse;
+      } catch (error) {
+        set.status = 400;
+        return {
+          status: "failed",
+          message: error instanceof Error ? error.message : "Could not read that backup",
+        } satisfies SetupInspectResponse;
+      }
+    },
+  );
+
+  app.post(
+    "/setup/restore",
+    {
+      body: t.Object({
+        backup: t.Unknown(),
+        username: t.Optional(t.String()),
+        password: t.Optional(t.String()),
+        display_name: t.Optional(t.String()),
+      }),
+    },
+    async ({ body, set }) => {
+      if (!(await setupService.requiresSetup())) {
+        set.status = 400;
+        return { status: "failed", message: "Setup already completed" } satisfies SetupResponse;
+      }
+      const admin =
+        typeof body.password === "string" && body.password.length > 0
+          ? {
+              password: body.password,
+              ...(typeof body.username === "string" ? { username: body.username } : {}),
+              ...(typeof body.display_name === "string" ? { displayName: body.display_name } : {}),
+            }
+          : undefined;
+      try {
+        const outcome = await setupService.restoreBackup(body.backup, admin);
+        return { status: "success", ...outcome } as unknown as SetupResponse;
+      } catch (error) {
+        if (error instanceof Error && error.message === "Setup already completed") {
+          set.status = 400;
+          return { status: "failed", message: error.message } satisfies SetupResponse;
+        }
+        const message = error instanceof Error ? error.message : "Restore failed";
+        set.status = 400;
+        return { status: "failed", message } satisfies SetupResponse;
+      }
     },
   );
 

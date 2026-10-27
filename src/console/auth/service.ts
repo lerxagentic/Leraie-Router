@@ -17,6 +17,7 @@ import { DEFAULT_API_KEY_LABEL } from "../domains/api-keys/contracts";
 import { resolveDefaultGatewayApiKey } from "../../config";
 import { TENANT_KEY_SCOPES, type AccessDecision } from "../../security/access-control";
 import { isRecord } from "../../protocol/primitives";
+import { BackupService, type BackupInspection, type ImportResult } from "../backup/service";
 
 // ---- auth-core.ts ----
 // Persistence types use CartethyiaDatabase (persistence/postgres.ts), the
@@ -449,10 +450,20 @@ export class ConsoleLockoutService {
 
 
 
+export interface AdminBootstrap {
+  readonly password: string;
+  readonly username?: string;
+  readonly displayName?: string;
+}
+
+export interface RestoreBackupOutcome extends ImportResult {
+  readonly createdAdmin: boolean;
+}
+
 const FIRST_BOOT_SETUP_LOCK = sql`SELECT pg_advisory_xact_lock(hashtext('cartethyia:first_boot_setup'))`;
 
 export class FirstBootSetupService {
-  private setupInFlight: Promise<void> | undefined;
+  private setupInFlight: Promise<unknown> | undefined;
   private readonly db: CartethyiaDatabase;
 
   constructor(
@@ -465,6 +476,79 @@ export class FirstBootSetupService {
   async requiresSetup(): Promise<boolean> {
     const existing = await readUsers(this.db);
     return existing.length === 0;
+  }
+
+  inspectBackup(payload: unknown): BackupInspection {
+    const backup = new BackupService({
+      db: this.db,
+      verifyPassword: async () => false,
+    });
+    return backup.inspect(payload);
+  }
+
+  async restoreBackup(payload: unknown, admin?: AdminBootstrap): Promise<RestoreBackupOutcome> {
+    const previous = this.setupInFlight;
+    if (previous) await previous.catch(() => undefined);
+
+    const operation = this.restoreBackupOnce(payload, admin);
+    this.setupInFlight = operation;
+    try {
+      return await operation;
+    } finally {
+      if (this.setupInFlight === operation) this.setupInFlight = undefined;
+    }
+  }
+
+  private async restoreBackupOnce(payload: unknown, admin?: AdminBootstrap): Promise<RestoreBackupOutcome> {
+    if (!(await this.requiresSetup())) throw new Error("Setup already completed");
+    if (admin === undefined || admin.password.length === 0) {
+      throw new Error("A backup carries no administrator account; set a username and password to finish");
+    }
+    const tenantId = randomUUID();
+    await this.db.insert(tenants).values({ id: tenantId, name: "Default", status: "active" });
+    let result: Awaited<ReturnType<BackupService["restoreFirstBoot"]>>;
+    try {
+      const backup = new BackupService({
+        db: this.db,
+        verifyPassword: async () => false,
+      });
+      result = await backup.restoreFirstBoot(payload, tenantId);
+      await this.createConsoleUser(
+        this.db,
+        tenantId,
+        admin.password,
+        admin.username,
+        admin.displayName,
+      );
+    } catch (error) {
+      await this.db.delete(tenants).where(eq(tenants.id, tenantId));
+      throw error;
+    }
+    return { ...result, createdAdmin: true };
+  }
+
+  private async createConsoleUser(
+    db: CartethyiaDatabase,
+    tenantId: string,
+    password: string,
+    username?: string,
+    displayName?: string,
+  ): Promise<void> {
+    const adminUsername = username?.trim() || "admin";
+    const passwordHash = await this.credentialService.hashPassword(password);
+    const userInsert = db.insert(consoleUsers).values({
+      id: randomUUID(),
+      tenantId,
+      username: adminUsername,
+      email: `${adminUsername}@localhost`,
+      passwordHash,
+      displayName: displayName?.trim() || "Administrator",
+      isFirstBoot: false,
+      isActive: true,
+      isPlatformAdmin: true,
+    });
+    const insertedUser = await returningRows(userInsert);
+    assertMutationApplied(insertedUser, "Administrator user");
   }
 
   /**
