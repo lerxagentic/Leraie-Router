@@ -28,10 +28,13 @@ import {
 } from "../provider-metadata";
 
 export const HERMES_MODELS: readonly ModelDefinition[] = [
-  defineModel({ id: "poolside/laguna-s-2.1:free", ctx: 262144, out: 131072, reasoning: true }),
-  defineModel({ id: "poolside/laguna-xs-2.1:free", ctx: 262144, out: 32768, reasoning: true }),
-  defineModel({ id: "stepfun/step-3.7-flash:free", ctx: 262144, out: 256000, vision: true, reasoning: true }),
-  defineModel({ id: "meituan/longcat-2.0:free", ctx: 1048756, out: 262144, reasoning: true }),
+  defineModel({ id: "poolside/laguna-s-2.1:free", ctx: 262144, out: 131072, reasoning: true, free: true }),
+  defineModel({ id: "poolside/laguna-xs-2.1:free", ctx: 262144, out: 32768, reasoning: true, free: true }),
+  defineModel({ id: "stepfun/step-3.7-flash:free", ctx: 262144, out: 256000, vision: true, reasoning: true, free: true }),
+  defineModel({ id: "upstage/solar-mini4:free", ctx: 524288, out: 131072, reasoning: true, free: true }),
+  defineModel({ id: "reflection/beam-1.0-501b-a23b:free", ctx: 262144, out: 131072, reasoning: true, free: true }),
+  defineModel({ id: "meituan/longcat-2.5-preview:free", ctx: 1048576, out: 131072, vision: true, reasoning: true, free: true }),
+  defineModel({ id: "ornith/ornith-1.5-122b:free", ctx: 262144, out: 262144, vision: true, reasoning: true, free: true }),
 ];
 
 
