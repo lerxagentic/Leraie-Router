@@ -28,6 +28,8 @@ export interface AccountHealthSummary {
   readonly staticToken?: boolean;
   readonly credentialKind?: CredentialKind;
   readonly credentialMode?: CredentialMode;
+  /** Who issued a static JWT, when the token's `iss` claim was readable. */
+  readonly jwtIssuer?: string | undefined;
 }
 
 /** Recovery is offered for the one transient state the backend can recover. */
@@ -139,6 +141,12 @@ export function HealthEventsModal({
               <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>
                 {staticMode ? "Static mode: no refresh request will be sent." : "OAuth refresh is enabled for this account."}
               </div>
+              {summary.jwtIssuer ? (
+                <div style={{ fontSize: "11px", color: "var(--text-tertiary)", marginTop: "4px", wordBreak: "break-all" }}>
+                  Static · no refresh · issuer{" "}
+                  <span style={{ fontFamily: "monospace", color: "var(--text-secondary)" }}>{summary.jwtIssuer}</span>
+                </div>
+              ) : null}
             </div>
             <Button
               size="sm"

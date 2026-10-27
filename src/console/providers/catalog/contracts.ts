@@ -411,6 +411,7 @@ export interface ProviderAccountResponse {
   credentialKind: CredentialKind;
   credentialMode?: CredentialMode;
   tokenExpiresAt?: string;
+  jwtIssuer?: string;
   status: string;
   /** Live routing admission count for this request path; absent when unavailable. */
   inflight?: number;
