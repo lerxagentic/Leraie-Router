@@ -135,7 +135,7 @@ export function createUpdateRoutes(config: {
               // Fresh, not `health`: that read is cached for 10 s and this
               // samples on that exact cadence, so the cached bytes would make
               // consecutive samples identical and a growth trend unreadable.
-              const live = await config.observabilityStore.health(tenantId);
+              const live = await config.observabilityStore.liveMemory();
               samples = [
                 ...samples,
                 { at, rss: live.memory_bytes, percent: live.memory_percent },

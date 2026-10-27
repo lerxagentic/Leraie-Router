@@ -223,6 +223,8 @@ export interface TelemetryEventListPage {
 }
 export interface ObservabilityStore {
   health(tenantId: string): Promise<SystemHealthResponse>;
+  /** Uncached process memory for live alerting; never performs database I/O. */
+  liveMemory(): Promise<{ memory_bytes: number; memory_percent: number }>;
   usage(tenantId: string, period: string): Promise<UsageResponse>;
   listEvents(tenantId: string, limit: number, cursor?: string): Promise<TelemetryEventListPage>;
   getEvent(

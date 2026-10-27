@@ -224,6 +224,14 @@ export class DrizzleObservabilityStore implements ObservabilityStore {
     return this.computeHealth(tenantId);
   }
 
+  async liveMemory(): Promise<{ memory_bytes: number; memory_percent: number }> {
+    const memory = process.memoryUsage();
+    return {
+      memory_bytes: memory.rss,
+      memory_percent: Math.round((memory.rss / Math.max(memory.heapTotal, 1)) * 10000) / 100,
+    };
+  }
+
   private async computeHealth(tenantId: string): Promise<SystemHealthResponse> {
     const memory = process.memoryUsage();
     const cpuPercent = Math.round((loadavg()[0]! / Math.max(cpus().length, 1)) * 10000) / 100;
