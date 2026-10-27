@@ -38,7 +38,7 @@ export async function codebuddyHeaders(
     "X-Domain": codebuddyDomain(variant),
     "x-requested-with": "XMLHttpRequest",
     "x-codebuddy-request": "1",
-    ...buddyConversationHeaders(resolveInboundSessionId(context, request)),
+    ...buddyConversationHeaders({ conversationId: resolveInboundSessionId(context, request) }),
   };
 }
 

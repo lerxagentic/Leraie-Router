@@ -81,7 +81,7 @@ export async function workbuddyHeaders(
     // explicitly so upstream risk control does not treat the omission as
     // suspicious.
     "x-no-enterprise-id": "1",
-    ...buddyConversationHeaders(resolveInboundSessionId(context, request)),
+    ...buddyConversationHeaders({ conversationId: resolveInboundSessionId(context, request) }),
   };
   const accountId = context?.credential.account_id;
   if (accountId) {
