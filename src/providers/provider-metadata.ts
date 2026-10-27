@@ -1,6 +1,8 @@
 import type { WireFamily } from "../transport/canonical-model";
 
-/** [OI]-compatible wire overrides persisted for bundled and BYOK providers. */
+import { TRAE_CHAT_PATH, TRAE_REALMS } from "./integrations/trae/trae-realm";
+
+/** OpenAI-compatible wire overrides persisted for bundled and BYOK providers. */
 export interface CompatibilityProfile {
   readonly extra_headers?: Readonly<Record<string, string>>;
   readonly extra_query_params?: Readonly<Record<string, string>>;
@@ -172,6 +174,15 @@ const RAW_BUNDLED_PROVIDER_METADATA = [
     credentialHint: "Use the API key from the Command Code CLI, or create one in the studio.",
   },
   { id: "qoder", displayName: "Qoder", baseUrl: "https://api2.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1", hasAdapterUserAgent: true, credentialUrl: "https://qoder.com", credentialHint: "Signed in with a Qoder account; there is no key to paste." },
+  { id: "trae", displayName: "Trae", baseUrl: `${TRAE_REALMS.intl.core}${TRAE_CHAT_PATH}`, hasAdapterUserAgent: true, credentialUrl: "https://www.trae.ai/", credentialHint: "Paste a Trae account export (accessToken + refreshToken) or the raw access token from an international Trae account." },
+  {
+    id: "traecn",
+    displayName: "Trae CN",
+    baseUrl: `${TRAE_REALMS.cn.core}${TRAE_CHAT_PATH}`,
+    hasAdapterUserAgent: true,
+    credentialUrl: "https://www.trae.com.cn/",
+    credentialHint: "Paste a Trae CN account export (accessToken + refreshToken) or the raw access token from a Trae China account.",
+  },
   { id: "ollamacloud", displayName: "Ollama Cloud", baseUrl: "https://ollama.com/v1", credentialUrl: "https://ollama.com/settings/keys" },
   { id: "gemini", displayName: "Google Gemini", baseUrl: "https://generativelanguage.googleapis.com/v1beta", credentialUrl: "https://aistudio.google.com/app/apikey" },
   { id: "xiaomipg", displayName: "Xiaomi MiMo (PAYG)", baseUrl: "https://api.xiaomimimo.com/v1", credentialUrl: "https://platform.xiaomimimo.com" },

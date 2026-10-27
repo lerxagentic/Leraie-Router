@@ -6,6 +6,7 @@ import type { QuotaFetcher } from "./quota/quota-support";
 import { BUNDLED_PROVIDER_METADATA, PROVIDER_COMPATIBILITY_PROFILES, providerRequiresAccount, providerUpstreamHost, providerDefaultWireFamily, type BundledProviderId } from "./provider-metadata";
 import { defineModel } from "./model-definition";
 import type { ProviderModelDiscovery } from "./discovery/discovery-types";
+import type { TraeRealm } from "./integrations/trae/trae-realm";
 
 /**
  * Builds a lazy OAuth authentication loader from a dynamic module import and the
@@ -66,6 +67,56 @@ function openAIModelDiscovery(
       ...(options?.headers ? { headers: options.headers(credential) } : {}),
       ...(fetcher ? { fetcher } : {}),
     });
+  };
+}
+
+function traeDiscovery(
+  realm: TraeRealm,
+  providerId: string,
+): NonNullable<ProviderModuleCapabilities["loadModelDiscovery"]> {
+  return async () => async (request: Parameters<ProviderModelDiscovery>[0]) => {
+    const { discoverTraeModels } = await import("./integrations/trae/trae");
+    const { TRAE_INTL_MODELS, TRAE_CN_MODELS } = await import("./integrations/trae/trae-catalog");
+    const secret = request.credential.trim();
+    const fetcher = request.fetcher as unknown as typeof fetch | undefined;
+    if (secret.length === 0 || fetcher === undefined) {
+      return realm === "cn" ? TRAE_CN_MODELS : TRAE_INTL_MODELS;
+    }
+    let token = secret;
+    if (secret.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(secret) as Record<string, unknown>;
+        const found = ["accessToken", "access_token", "token"].find(
+          (key) => typeof parsed[key] === "string" && (parsed[key] as string).length > 0,
+        );
+        if (found !== undefined) token = parsed[found] as string;
+      } catch {
+        // Use the raw secret as the token.
+      }
+    }
+    const region = request.authState?.["region"];
+    const rows = await discoverTraeModels({
+      realm,
+      token,
+      uid: (request.authState?.["accountId"] as string | undefined) ?? "",
+      fetcher,
+      providerId,
+      ...(typeof region === "string" ? { region } : {}),
+    });
+    if (rows.length === 0) return realm === "cn" ? TRAE_CN_MODELS : TRAE_INTL_MODELS;
+    const fallback = realm === "cn" ? TRAE_CN_MODELS : TRAE_INTL_MODELS;
+    const byId = new Map(fallback.map((model) => [model.modelId, model]));
+    return rows
+      .map((row) => {
+        const existing = byId.get(row.id);
+        if (existing === undefined) {
+          const template = fallback[0];
+          if (template === undefined) return undefined;
+          return { ...template, modelId: row.id, contextLimit: row.ctx ?? null };
+        }
+        return row.ctx === undefined ? existing : { ...existing, contextLimit: row.ctx };
+      })
+      .filter((model): model is NonNullable<typeof model> => model !== undefined);
   };
 }
 
@@ -368,6 +419,20 @@ export const PROVIDER_CAPABILITIES = {
   qoder: {
     loadAdapter: async () => (await import("./integrations/qoder")).createQoderAdapter(),
     loadModels: async () => (await import("./integrations/qoder")).QODER_MODELS,
+  },
+  trae: {
+    loadAdapter: async () => (await import("./integrations/trae/trae")).createTraeAdapter(),
+    loadModels: async () => (await import("./integrations/trae/trae-catalog")).TRAE_INTL_MODELS,
+    loadAuthentication: oauthCapability(() => import("./integrations/trae/trae-oauth"), "traeOAuthClient", { withRefresher: true }),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/trae/trae-quota"), "fetchTraeQuota"),
+    loadModelDiscovery: traeDiscovery("intl", "trae"),
+  },
+  traecn: {
+    loadAdapter: async () => (await import("./integrations/trae/trae")).createTraeCnAdapter(),
+    loadModels: async () => (await import("./integrations/trae/trae-catalog")).TRAE_CN_MODELS,
+    loadAuthentication: oauthCapability(() => import("./integrations/trae/trae-oauth"), "traeCnOAuthClient", { withRefresher: true }),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/trae/trae-quota"), "fetchTraeCnQuota"),
+    loadModelDiscovery: traeDiscovery("cn", "traecn"),
   },
   inferhub: {
     loadAdapter: async () => (await import("./integrations/inferhub")).createInferhubAdapter(),

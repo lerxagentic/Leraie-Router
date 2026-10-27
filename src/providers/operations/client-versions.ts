@@ -56,6 +56,23 @@ async function workbuddyDesktopVersion(response: Response): Promise<string | nul
   }
 }
 
+async function traeVersion(response: Response): Promise<string | null> {
+  try {
+    const text = await response.text();
+    const heading =
+      /"insert":"((?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s*\d{4}\s*\([^)]*\))\\n"/g;
+    for (const match of text.matchAll(heading)) {
+      const window = text.slice(match.index ?? 0, (match.index ?? 0) + 900);
+      const found = window.match(/TraeCode\s+v?(\d+\.\d+\.\d+)|v?(\d+\.\d+\.\d+)\s+is\s+released/i);
+      const version = found?.[1] ?? found?.[2];
+      if (version && isSemverish(version)) return version.trim();
+    }
+  } catch {
+    // Unparseable falls back to the configured pin.
+  }
+  return null;
+}
+
 async function kiroVersion(response: Response): Promise<string | null> {
   const body = await response.text();
   const version =
@@ -248,6 +265,16 @@ export const VERSION_SOURCES = {
     fallback: "0.127.0",
     sources: [],
   },
+  trae: {
+    key: "trae",
+    fallback: "3.6.2",
+    sources: [
+      {
+        url: "https://docs.trae.ai/ide/changelog?_lang=en",
+        extract: traeVersion,
+      },
+    ],
+  },
 } as const;
 
 const resolvers = {
@@ -266,6 +293,7 @@ const resolvers = {
   claudeCli: createClientVersionResolver(VERSION_SOURCES.claudeCli),
   claudeSdk: createClientVersionResolver(VERSION_SOURCES.claudeSdk),
   kiro: createClientVersionResolver(VERSION_SOURCES.kiro),
+  trae: createClientVersionResolver(VERSION_SOURCES.trae),
 } satisfies Record<keyof typeof VERSION_SOURCES, ClientVersionResolver>;
 const PROVIDER_VERSION_RESOLVERS: Readonly<Record<string, ClientVersionResolver>> = {
   antigravity: resolvers.antigravity,
@@ -285,6 +313,8 @@ const PROVIDER_VERSION_RESOLVERS: Readonly<Record<string, ClientVersionResolver>
   kiro: resolvers.kiro,
   anthropic: resolvers.claudeCli,
   claude: resolvers.claudeCli,
+  trae: resolvers.trae,
+  traecn: resolvers.trae,
 };
 
 /** Returns the current client version without performing network I/O. */
@@ -386,6 +416,8 @@ export function _resetClaudeVersionCache(version: string | null = null): void {
 }
 
 export const getKiroVersion = accessor("kiro").get;
+export const getTraeVersion = accessor("trae").get;
+export const _resetTraeVersion = accessor("trae").reset;
 export const _resetKiroVersion = accessor("kiro").reset;
 
 /**

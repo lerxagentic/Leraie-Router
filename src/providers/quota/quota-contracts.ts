@@ -181,11 +181,13 @@ export function percentWindow(
   resetsAt: string | null,
   usedValue?: number | null,
   limit?: number | null,
+  accounting?: "pooled" | "independent",
 ): ProviderQuotaWindow {
   const usedPercent = used === null ? null : Math.min(100, Math.max(0, used));
   return {
     kind,
     label,
+    ...(accounting !== undefined ? { accounting } : {}),
     usedPercent,
     remainingPercent: usedPercent === null ? null : Math.max(0, 100 - usedPercent),
     resetsAt,
