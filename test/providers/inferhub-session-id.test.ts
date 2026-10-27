@@ -12,8 +12,8 @@
  * reads the headers actually produced.
  */
 import { describe, expect, test } from "bun:test";
-import type { CanonicalRequest } from "../../src/protocol/canonical-model";
-import type { ProviderDispatchContext, ProviderDispatchTarget } from "../../src/providers/provider-contracts";
+import type { CanonicalRequest } from "../../src/transport/canonical-model";
+import type { ProviderDispatchContext, ProviderDispatchTarget } from "../../src/providers/provider-registry";
 import { InferhubMessagesAdapter } from "../../src/providers/integrations/inferhub";
 import { createInferhubAdapter } from "../../src/providers/integrations/inferhub";
 

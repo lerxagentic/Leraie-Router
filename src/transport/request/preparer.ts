@@ -436,7 +436,11 @@ export class ProxyRequestPreparer {
         : withThinkingSuffixIntent({ ...initialRequest, model: bareModel }, thinkingIntent);
     const snapshot = await this.deps.snapshotService.getSnapshot();
     if (snapshot.invokeDisabledTenants?.has(authorization.tenantId)) {
-      throw new GatewayError("service_unavailable", 503, "invoke is disabled for this tenant");
+      throw new GatewayError(
+        "platform_unavailable",
+        503,
+        "This gateway has invoke switched off. Nothing upstream is being dialed while the switch is off; turn it back on from the dashboard overview to resume routing.",
+      );
     }
     // Scope opts the key into the mapping table; the User-Agent decides whether
     // *this* request may consume it. Without the UA gate, a Claude→DeepSeek
