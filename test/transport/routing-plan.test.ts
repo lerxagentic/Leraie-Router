@@ -134,6 +134,28 @@ describe("saturated ordering", () => {
     await engine.release(held);
     expect(firstAttempts).toEqual(["room", "room", "room", "room"]);
   });
+
+  test("a candidate that is both lane-active and saturated is planned exactly once", async () => {
+    // The partitions overlap: an account can hold several states at once. Emitting
+    // it once per matching predicate duplicated it in the plan, and the attempt
+    // loop then dialed the same account several times for one request.
+    const both = `both-${crypto.randomUUID()}`;
+    sharedClaudeSlowLanes.observe(both, {
+      offer: "treatment",
+      status: "active",
+      unifiedLimitClaim: false,
+      overageInUse: false,
+      unifiedResetAtSec: Math.floor(Date.now() / 1000) + 3600,
+    });
+    const bothCandidate = candidate(both, { max_inflight: 1 });
+    const fresh = candidate("fresh", { max_inflight: 1 });
+    const engine = new RoutingEngine(new InMemoryAdmissionController());
+    const held = await engine.reserve(await engine.plan("p/m", snapshot([bothCandidate]), null));
+    const plan = await engine.plan("p/m", snapshot([bothCandidate, fresh]), null);
+    await engine.release(held);
+    const reached = order(plan);
+    expect(reached).toEqual(["fresh", both]);
+  });
 });
 
 describe("time-bounded exclusions answer 429, not 503", () => {

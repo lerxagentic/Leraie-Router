@@ -838,17 +838,25 @@ export class RoutingEngine {
     );
     const saturated = await this.saturatedCandidates(eligible);
     const orderEligible = (candidates: readonly RouteCandidate[]): RouteCandidate[] => {
+      // Each candidate lands in exactly ONE bucket, by priority. A candidate can
+      // hold several states at once — lane-active *and* at its ceiling, or
+      // cooling *and* saturated — and emitting it once per matching predicate
+      // duplicated it in the plan, which the attempt loop then dialed repeatedly.
+      // The highest-priority state decides, following the attempt order above.
+      //
       // Stable partition: filtering preserves the incoming order inside each
       // group, which is what keeps the rotation's own ordering intact.
-      const fresh = candidates.filter(
-        (candidate) => !slow.has(candidate) && !cooling.has(candidate) && !saturated.has(candidate),
-      );
-      const lanedOnly = candidates.filter((candidate) => slow.has(candidate) && !cooling.has(candidate));
-      const coolingOnly = candidates.filter(
-        (candidate) => cooling.has(candidate) && !saturated.has(candidate),
-      );
-      const saturatedOnly = candidates.filter((candidate) => saturated.has(candidate));
-      return [...fresh, ...lanedOnly, ...coolingOnly, ...saturatedOnly];
+      const buckets: RouteCandidate[][] = [[], [], [], []];
+      for (const candidate of candidates) {
+        if (cooling.has(candidate)) buckets[2]!.push(candidate);
+        else if (slow.has(candidate)) buckets[1]!.push(candidate);
+        else if (saturated.has(candidate)) buckets[3]!.push(candidate);
+        else buckets[0]!.push(candidate);
+      }
+      // A cooling candidate that is also saturated is still ordered as cooling:
+      // cooling means "the upstream refused this and stated when to come back",
+      // which is stronger evidence than a local counter being full.
+      return buckets.flat();
     };
     eligible = orderEligible(eligible);
     // Capability-aware routing: filter against snapshot capability profiles
