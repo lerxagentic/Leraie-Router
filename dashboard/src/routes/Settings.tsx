@@ -8,6 +8,7 @@ import { ErrorState, LoadingState } from "../components/ui/state";
 import { Inline } from "../components/ui/inline";
 import { Stack } from "../components/ui/stack";
 import { BackupPanel } from "../components/BackupPanel";
+import { DataManagementPanel, RemoteSupportPanel } from "../components/OperationsPanels";
 import { toast } from "../shared/toast";
 import { useChangePassword } from "../hooks/auth";
 import { useRuntimeSettings, useUpdateRuntimeSettings } from "../hooks/settings";
@@ -219,6 +220,8 @@ export default function Settings(): ReactNode {
       <PrivacyPanel />
 
       {/* Backup & Restore */}
+      <DataManagementPanel />
+      <RemoteSupportPanel />
       <BackupPanel />
     </div>
   );

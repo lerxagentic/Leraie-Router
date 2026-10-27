@@ -55,6 +55,7 @@ import { AddModelModal, ModelGrid, ThinkingSelect } from "./provider-detail/Mode
 import { freeAccessFromQuota } from "../shared/quota-formatters";
 import { useQuotaOverview } from "../hooks/quota";
 import { PROBE_REASONING_EFFORTS, type ProbeReasoningEffort } from "../data/contracts";
+import { InferhubMarketPanel } from "../components/InferhubMarketPanel";
 
 export default function ProviderDetail(): ReactNode {
   const { providerId } = useParams<{ providerId: string }>();
@@ -359,6 +360,7 @@ export default function ProviderDetail(): ReactNode {
       />
       {/* Where to obtain this provider's credential */}
       <CredentialNotice provider={provider} />
+      {id === "inferhub" ? <InferhubMarketPanel /> : null}
       {/* Routing Strategy */}
       <RoutingStrategyCard
         providerId={id}

@@ -42,6 +42,10 @@ import { useProviders } from "../hooks/providers";
 import { DASHBOARD_RELEASE_LABEL } from "../shared/version";
 import type { SessionUser } from "../data/contracts";
 import { formatUptime } from "../shared/format";
+import { useOperationMutation, useRelease } from "../hooks/operations";
+import { Button } from "./ui/button";
+
+interface UiNotification { id:string; title:string; message:string; createdAt:string; level:string; href?:string }
 
 interface NavItemDef {
   readonly label: string;
@@ -222,6 +226,10 @@ function NotificationsPopover({ isHealthy }: { isHealthy: boolean }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const release = useRelease();
+  const apply = useOperationMutation<{started:boolean}>("/updates/apply");
+  const [events,setEvents]=useState<UiNotification[]>([]);
+  useEffect(()=>{ const source=new EventSource("/console/api/notifications/stream"); source.addEventListener("notification",event=>{try{const item=JSON.parse((event as MessageEvent).data) as UiNotification;setEvents(previous=>[item,...previous.filter(entry=>entry.id!==item.id)].slice(0,20));}catch{/* ignore malformed event */}});return()=>source.close();},[]);
 
   useEffect(() => {
     if (!open) return;
@@ -259,6 +267,7 @@ function NotificationsPopover({ isHealthy }: { isHealthy: boolean }) {
         onClick={() => setOpen((v) => !v)}
       >
         <Bell size={17} />
+        {release.data||events.length>0?<span aria-label="Unread notifications" style={{position:"absolute",width:7,height:7,borderRadius:9,background:"var(--red)",top:5,right:5}}/>:null}
       </button>
       {open
         ? createPortal(
@@ -322,6 +331,8 @@ function NotificationsPopover({ isHealthy }: { isHealthy: boolean }) {
                 </button>
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: "10px" }}>
+                {release.data ? <div style={{padding:12,border:"1px solid var(--accent-soft)",borderRadius:14}}><strong>Update {release.data.tag_name} available</strong><p style={{fontSize:11}}>Review the release, then apply it. The gateway will restart.</p><Button size="sm" variant="primary" disabled={apply.isPending} onClick={()=>confirm(`Apply ${release.data?.tag_name}? The gateway will restart.`)&&apply.mutate()}>{apply.isPending?"Starting update…":"Apply update"}</Button></div>:null}
+                {events.map(event=><div key={event.id} style={{padding:12,border:"1px solid var(--inner-border)",borderRadius:14}}><strong>{event.title}</strong><p style={{fontSize:11}}>{event.message}</p>{event.href?<a href={event.href} target="_blank" rel="noreferrer">View release</a>:null}</div>)}
                 <div
                   style={{
                     padding: "12px",

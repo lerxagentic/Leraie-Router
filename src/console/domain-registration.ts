@@ -52,6 +52,7 @@ import { createRemoteSupportService } from "./remote-support/service";
 import { createBackupRoutes } from "./backup/routes";
 import { BackupService } from "./backup/service";
 import type { ConsoleCredentialService } from "./auth/service";
+import { healthEvents } from "../persistence/schema";
 
 import { OAuthFlowStore } from "../providers/authentication/oauth-flow-store";
 import { OAuthCallbackListener } from "./providers/oauth/callback-listener";
@@ -321,6 +322,10 @@ export function registerConsoleDomains(
     accessResolver: ctx.accessResolver,
     auditSink: ctx.auditRecorder,
     flusher: ctx.telemetryBuffer,
+    healthEvents: {
+      count: async () => (await ctx.db.select({ id: healthEvents.id }).from(healthEvents)).length,
+      purgeAll: async () => (await ctx.db.delete(healthEvents).returning({ id: healthEvents.id })).length,
+    },
   }));
   console.use(
     createBackupRoutes({

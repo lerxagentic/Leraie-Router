@@ -85,6 +85,11 @@ export const queryKeys = {
     summary: ["console", "inferhub", "summary"] as const,
     models: (prefix: string | undefined) => ["console", "inferhub", "models", prefix] as const,
   },
+  operations: {
+    dataUsage: ["console", "data-management", "usage"] as const,
+    remoteSupport: ["console", "remote-support", "status"] as const,
+    release: ["console", "updates", "release"] as const,
+  },
   studio: {
     sessions: ["console", "studio", "sessions"] as const,
     session: (sessionId: string) => ["console", "studio", "sessions", sessionId] as const,
