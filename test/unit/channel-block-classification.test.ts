@@ -55,7 +55,8 @@ describe("buddy channel rejection 11128", () => {
       "Account Suspended",
     ]) {
       const c = classify(message, "", "cb");
-      expect(c.category).toBe("policy_blocked");
+      expect(c.category).toBe("policy_blocked_banned");
+      expect(c.status).toBe("disabled");
       expect(c.mutatesAccount).toBe(true);
     }
   });
