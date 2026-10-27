@@ -448,9 +448,12 @@ export class DrizzleObservabilityStore implements ObservabilityStore {
   async usageChart(tenantId: string, period: string): Promise<UsageChartResponse> {
     const since = periodStartDate(period);
     const bucketSeconds = chartBucketSeconds(period);
+    const width = Math.max(1, Math.trunc(bucketSeconds));
+    const w = sql.raw(String(width));
+    const bucketExpression = sql<Date>`to_timestamp(floor(extract(epoch from ${telemetryEvents.createdAt}) / ${w}) * ${w})`;
     const rows = await this.db
       .select({
-        bucket: sql<Date>`to_timestamp(floor(extract(epoch from ${telemetryEvents.createdAt}) / ${bucketSeconds}) * ${bucketSeconds})`,
+        bucket: bucketExpression,
         requests: sql<number>`count(*)`,
         input: sql<number>`coalesce(sum(${telemetryEvents.inputTokens}), 0)`,
         cached: sql<number>`coalesce(sum(${telemetryEvents.inputTokens}) filter (where ${telemetryEvents.cachedInputTokens} > 0), 0)`,
@@ -458,8 +461,8 @@ export class DrizzleObservabilityStore implements ObservabilityStore {
       })
       .from(telemetryEvents)
       .where(this.usageScope(tenantId, period))
-      .groupBy(sql`1`)
-      .orderBy(sql`1`);
+      .groupBy(bucketExpression)
+      .orderBy(bucketExpression);
     const byTime = new Map<number, UsageChartBucket>();
     for (const row of rows) {
       const start = Math.floor(new Date(row.bucket).getTime() / 1000) * 1000;
