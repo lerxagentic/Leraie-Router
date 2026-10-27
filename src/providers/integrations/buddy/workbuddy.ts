@@ -8,7 +8,7 @@
 // Payload: leading WorkBuddy system prompt + typed user content, reasoning_summary
 //          auto only when reasoning_effort requested
 
-import { OpenAICompatibleAdapter } from "../../compatible-adapter";
+import { BuddyMediaAdapter } from "./buddy-media";
 import { providerBaseUrl } from "../../provider-metadata";
 import { GatewayError } from "../../../transport/gateway-error";
 import type { CanonicalRequest } from "../../../transport/canonical-model";
@@ -156,12 +156,17 @@ export async function discoverWorkBuddyModels(
 // Public factory — uses the OpenAI-compatible factory but forces provider semantics.
 // Supports both api_key and oauth via Authorization Bearer (factory handles both).
 export function createWorkBuddyAdapter(fetchImpl?: typeof fetch): ProviderAdapter {
-  return new OpenAICompatibleAdapter(
+  return new BuddyMediaAdapter(
     workbuddyAdapterConfig({
       providerId: WORKBUDDY_PROVIDER_ID,
       baseUrl: WORKBUDDY_BASE_URL,
       prePayload: workbuddyPrePayload,
       ...(fetchImpl ? { fetchImpl } : {}),
     }),
+    {
+      variant: "IDE",
+      systemPrompt: WORKBUDDY_SYSTEM_PROMPT,
+      baseUrl: WORKBUDDY_BASE_URL,
+    },
   );
 }

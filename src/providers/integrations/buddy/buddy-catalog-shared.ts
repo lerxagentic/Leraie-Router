@@ -29,23 +29,128 @@ export type BuddyRawEntry = readonly [
   boolean?,
 ];
 
+/** The image-generation ids the international buddy providers serve. */
+const BUDDY_IMAGE_MODEL_IDS: readonly { id: string; endpoint: string; ctx: number; out: number }[] = [
+  { id: "gemini-2.5-flash-image", endpoint: "/chat/completions", ctx: 1_000_000, out: 64_000 },
+  { id: "gemini-3.0-pro-image", endpoint: "/chat/completions", ctx: 1_000_000, out: 64_000 },
+  { id: "gemini-3.1-flash-image", endpoint: "/chat/completions", ctx: 1_000_000, out: 64_000 },
+  { id: "gpt-image-2", endpoint: "/chat/completions", ctx: 400_000, out: 128_000 },
+  { id: "gpt-image-2.5-sunburst", endpoint: "/chat/completions", ctx: 400_000, out: 128_000 },
+  { id: "hy-image-3.5", endpoint: "/chat/completions", ctx: 1_000_000, out: 64_000 },
+];
+
+/** The video-generation ids the international buddy providers serve. */
+const BUDDY_VIDEO_MODEL_IDS: readonly { id: string; endpoint: string; ctx: number; out: number }[] = [
+  { id: "seedance-2.5", endpoint: "/videos/generations", ctx: 1_000_000, out: 128_000 },
+  { id: "kling-video-v3", endpoint: "/videos/generations", ctx: 1_000_000, out: 128_000 },
+];
+
+export const BUDDY_IMAGE_MODEL_ID_SET: ReadonlySet<string> = new Set(
+  BUDDY_IMAGE_MODEL_IDS.map((entry) => entry.id),
+);
+
+export const BUDDY_VIDEO_MODEL_ID_SET: ReadonlySet<string> = new Set(
+  BUDDY_VIDEO_MODEL_IDS.map((entry) => entry.id),
+);
+
+const BUDDY_CN_IMAGE_MODEL_IDS: readonly { id: string; ctx: number; out: number }[] = [
+  { id: "hunyuan-image-alpha", ctx: 1_000_000, out: 64_000 },
+];
+
+export const BUDDY_CN_IMAGE_MODEL_ID_SET: ReadonlySet<string> = new Set(
+  BUDDY_CN_IMAGE_MODEL_IDS.map((entry) => entry.id),
+);
+
+export const BUDDY_PRO_ONLY_MODEL_IDS: ReadonlySet<string> = new Set([
+  "primary-model",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+  "gpt-5.6-sol",
+  "gpt-6-luna",
+  "gpt-6-sol",
+  "gpt-6.1-sol",
+  "gpt-5.5",
+  "gpt-5.4",
+  "gemini-3.5-flash",
+  "gemini-3.8-flash",
+  "grok-4.6",
+  "grok-4.7",
+  "kimi-k3.1-pro-highspeed",
+  "claude-opus-4.6",
+  "claude-opus-4.7-1m",
+]);
+
+export function makeBuddyImageModels(
+  providerId: string,
+  endpoint: string,
+): readonly ModelDefinition[] {
+  return BUDDY_IMAGE_MODEL_IDS.map((entry) =>
+    defineModel({
+      id: entry.id,
+      providerId,
+      serviceKind: "imageGeneration",
+      wireFamily: "chat",
+      endpoint,
+      ctx: entry.ctx,
+      out: entry.out,
+      vision: true,
+      output: ["image"],
+      toolCall: false,
+    }),
+  );
+}
+
+export function makeBuddyVideoModels(
+  providerId: string,
+  endpoint: string,
+): readonly ModelDefinition[] {
+  return BUDDY_VIDEO_MODEL_IDS.map((entry) =>
+    defineModel({
+      id: entry.id,
+      providerId,
+      serviceKind: "videoGeneration",
+      wireFamily: "chat",
+      endpoint,
+      ctx: entry.ctx,
+      out: entry.out,
+      vision: true,
+      output: ["video"],
+      toolCall: false,
+    }),
+  );
+}
+
+export function makeBuddyCnImageModels(
+  providerId: string,
+  endpoint: string,
+): readonly ModelDefinition[] {
+  return BUDDY_CN_IMAGE_MODEL_IDS.map((entry) =>
+    defineModel({
+      id: entry.id,
+      providerId,
+      serviceKind: "imageGeneration",
+      wireFamily: "chat",
+      endpoint,
+      ctx: entry.ctx,
+      out: entry.out,
+      vision: true,
+      output: ["image"],
+      toolCall: false,
+    }),
+  );
+}
+
 /**
  * Builds one buddy catalog row.
- *
- * `endpoint` is explicit rather than left to the generic `/chat/completions`
- * default because the two families disagree about it: CodeBuddy's base URL
- * carries a version segment the default joins onto correctly, while
- * WorkBuddy's does not — the default would produce
- * `https://www.workbuddy.ai/chat/completions`, which that upstream answers
- * with a 405 HTML page. Callers pass the endpoint their base URL actually
- * serves, and `undefined` for the default.
  */
 export function makeBuddyModel(
   entry: BuddyRawEntry,
   providerId: string,
   endpoint?: string,
+  realm: "intl" | "cn" = "intl",
 ): ModelDefinition {
   if (!entry[0]) throw new GatewayError("invalid_request", 400, "invalid model");
+  const proOnly = realm === "intl" && BUDDY_PRO_ONLY_MODEL_IDS.has(entry[0].toLowerCase());
   return defineModel({
     id: entry[0],
     providerId,
@@ -55,28 +160,14 @@ export function makeBuddyModel(
     ctx: entry[4],
     out: entry[5],
     ...(entry[6] === undefined ? {} : { toolCall: entry[6] }),
+    ...(proOnly ? { proOnly: true } : {}),
   });
 }
 
 /**
  * The shared model roster for the two international buddy sites.
- *
- * CodeBuddy intl and WorkBuddy serve the same model set from the same console
- * directory shape, so the two catalogs were kept as separate hand-written lists
- * and had already drifted: each carried ids the other lacked. One list is the
- * single source of truth, and each provider maps it with its own endpoint
- * (`workbuddy.ts` needs the explicit `/v2/chat/completions`, `codebuddy.ts`
- * takes the family default) — the endpoint is the only thing that differs.
- *
- * CodeBuddy CN is deliberately NOT on this list: its console publishes a
- * different roster (its own `glm-5v-turbo` / `kimi-k3-1` ids and CN-specific
- * output ceilings), so it keeps its own table.
  */
 export const BUDDY_SHARED_RAW: readonly BuddyRawEntry[] = [
-  // `auto` is a router-side alias, not a real model, so upstream publishes no
-  // output ceiling for it. Its context window matches the Claude tier the alias
-  // resolves to; leaving `out` null made the catalog card render
-  // "168k ctx · n/a out" beside rows that all show a number.
   ["auto", "Auto", true, true, 168_000, 64_000],
   ["primary-model", "Primary", true, true, 272_000, 72_000],
   ["claude-opus-4.6", "Claude Opus 4.6", true, true, 200_000, 64_000],

@@ -6,7 +6,7 @@
 // Headers: per-provider CodeBuddy headers with fresh correlation IDs per dispatch
 // Payload: leading CodeBuddy system prompt + typed user content, reasoning_summary auto only when reasoning_effort
 
-import { OpenAICompatibleAdapter } from "../../compatible-adapter";
+import { BuddyMediaAdapter } from "./buddy-media";
 import type { ProviderDispatchTarget, ModelDefinition, ProviderAdapter } from "../../provider-registry";
 import type { DiscoveryInput } from "../../discovery/discovery-types";
 import { GatewayError } from "../../../transport/gateway-error";
@@ -114,7 +114,7 @@ export async function discoverCodeBuddyModels(
 // Supports both api_key and oauth via Authorization Bearer (factory handles both)
 
 export function createCodeBuddyAdapter(fetchImpl?: typeof fetch): ProviderAdapter {
-  return new OpenAICompatibleAdapter(
+  return new BuddyMediaAdapter(
     codebuddyAdapterConfig({
       providerId: CODEBUDDY_PROVIDER_ID,
       baseUrl: CODEBUDDY_BASE_URL,
@@ -122,6 +122,12 @@ export function createCodeBuddyAdapter(fetchImpl?: typeof fetch): ProviderAdapte
       prePayload: codeBuddyIntlPrePayload,
       ...(fetchImpl ? { fetchImpl } : {}),
     }),
+    {
+      variant: "IDE",
+      systemPrompt: CODEBUDDY_SYSTEM_PROMPT,
+      baseUrl: CODEBUDDY_BASE_URL,
+      imageGenerationPath: "/images/generations",
+    },
   );
 }
 

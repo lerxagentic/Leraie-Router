@@ -72,6 +72,7 @@ export interface ModelDefinition {
    * so a hand-built definition correctly says nothing. Read it as `=== true`.
    */
   readonly freeTier?: boolean;
+  readonly proOnly?: boolean;
 }
 
 /** Fields accepted by `defineModel`; every field except `id` falls back to the shared default. */
@@ -99,11 +100,13 @@ export interface ModelHelperRow {
   /** Accepts audio input parts. */
   readonly audio?: boolean;
   readonly reasoning?: boolean;
+  readonly output?: readonly string[];
   /** Explicitly supported reasoning effort scale. */
   readonly reasoningEfforts?: readonly string[];
   readonly toolCall?: boolean;
   /** Defaults to false. */
   readonly webSearch?: boolean;
+  readonly proOnly?: boolean;
   /**
    * Marks a row served by a free plan tier. Such rows bill zero per token
    * regardless of what the base catalog charges for the underlying model.
@@ -207,13 +210,14 @@ export function defineModel(row: ModelHelperRow): ModelDefinition {
         ...(row.document ? ["document"] : []),
         ...(row.audio ? ["audio"] : []),
       ],
-      output: ["text"],
+      output: row.output ? [...row.output] : ["text"],
     },
     reasoning: row.reasoning ?? false,
     ...(row.reasoningEfforts !== undefined ? { reasoningEfforts: row.reasoningEfforts } : {}),
     toolCall: row.toolCall ?? true,
     webSearch: row.webSearch ?? false,
     cost,
+    ...(row.proOnly !== undefined ? { proOnly: row.proOnly } : {}),
     ...(row.freeTier === undefined ? {} : { freeTier: row.freeTier }),
   };
 }
