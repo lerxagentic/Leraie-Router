@@ -80,6 +80,16 @@ export async function releaseDaySlotsBatch(
   await pipeline.exec().catch(() => undefined);
 }
 
+export function withDirectFallback(fetcher: typeof fetch): typeof fetch {
+  if (fetcher === globalThis.fetch) return fetcher;
+  const wrapped: typeof fetch = (async (input, init) => {
+    const viaProxy = await fetcher(input, init);
+    if (viaProxy.status !== 403) return viaProxy;
+    return globalThis.fetch(input, init);
+  }) as typeof fetch;
+  return wrapped;
+}
+
 export type DailyGrowthPassResult = {
   readonly checkin: DailyCheckinResult;
   readonly report: BuddyActivityReportResult;

@@ -105,7 +105,7 @@ function refillCadence(acc: TencentBillingAccount): string {
  * JSON (`{accessToken, apiKey, token, ...}`), so both shapes resolve here and a
  * non-JSON credential passes through unchanged.
  */
-function resolveBearerToken(credential: string): string | null {
+export function resolveBearerToken(credential: string): string | null {
   const trimmed = credential.trim();
   if (!trimmed) return null;
   if (trimmed.startsWith("{")) {

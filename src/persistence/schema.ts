@@ -1161,3 +1161,42 @@ export const modelBenchmarks = pgTable(
   },
   (table) => [index("model_benchmarks_tenant_model_at_idx").on(table.tenantId, table.model, table.at)],
 );
+
+export const buddyUsageSnapshots = pgTable(
+  "buddy_usage_snapshots",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => providerAccounts.id, { onDelete: "cascade" }),
+    dayKey: text("day_key").notNull(),
+    model: text("model").notNull(),
+    credit: numeric("credit", { precision: 14, scale: 4 }).notNull(),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.accountId, table.dayKey, table.model] }),
+    index("buddy_usage_snapshots_day_idx").on(table.dayKey),
+  ],
+);
+
+export type BuddyUsageSnapshotRow = typeof buddyUsageSnapshots.$inferSelect;
+export type InsertBuddyUsageSnapshotRow = typeof buddyUsageSnapshots.$inferInsert;
+
+export const buddyTaskLedger = pgTable(
+  "buddy_task_ledger",
+  {
+    dayKey: text("day_key").notNull(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => providerAccounts.id, { onDelete: "cascade" }),
+    task: text("task").notNull(),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.dayKey, table.accountId, table.task] }),
+    index("buddy_task_ledger_account_idx").on(table.accountId),
+  ],
+);
+
+export type BuddyTaskLedgerRow = typeof buddyTaskLedger.$inferSelect;
+export type InsertBuddyTaskLedgerRow = typeof buddyTaskLedger.$inferInsert;
