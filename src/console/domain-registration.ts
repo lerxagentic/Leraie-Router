@@ -46,6 +46,9 @@ import { createBenchmarkRoutes } from "./domains/benchmark/contracts";
 import { DrizzleBenchmarkStore } from "./domains/benchmark/store";
 import { createBenchmarkProbe } from "./domains/benchmark/probe";
 import { createPerformanceRoutes } from "./observability/performance";
+import { createUpdateRoutes } from "./updates/routes";
+import { createRemoteSupportRoutes } from "./remote-support/routes";
+import { createRemoteSupportService } from "./remote-support/service";
 import { createBackupRoutes } from "./backup/routes";
 import { BackupService } from "./backup/service";
 import type { ConsoleCredentialService } from "./auth/service";
@@ -60,7 +63,7 @@ import { syncByokProvider } from "../providers/operations/provider-catalog-servi
 import { DrizzleApiKeyStore } from "../persistence/api-key-store";
 import { DrizzleShareLinkStore } from "../persistence/share-store";
 import { createShareUsagePort } from "./share/share-usage";
-import { resolveSsrfPolicy } from "../config";
+import { resolvePort, resolveSsrfPolicy } from "../config";
 import { createValidatedFetch } from "../network/outbound-fetch";
 import type { AuditRecorder } from "./auth/service";
 import type { CliToolService } from "./cli-tools/service";
@@ -254,6 +257,11 @@ export function registerConsoleDomains(
   }));
   console.use(createLogRoutes({ accessResolver: ctx.accessResolver, auditSink: ctx.auditRecorder }));
   console.use(createPerformanceRoutes({ accessResolver: ctx.accessResolver }));
+  console.use(createUpdateRoutes({ accessResolver: ctx.accessResolver, observabilityStore }));
+  console.use(createRemoteSupportRoutes({
+    accessResolver: ctx.accessResolver,
+    service: createRemoteSupportService({ port: resolvePort() }),
+  }));
   console.use(createAuditRoutes({ store: auditReadStore, accessResolver: ctx.accessResolver }));
   const inferhubKeys = createInferhubKeyStore(ctx.db);
   console.use(createInferhubRoutes({

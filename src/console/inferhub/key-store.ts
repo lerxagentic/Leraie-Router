@@ -17,7 +17,7 @@
 import { and, eq } from "drizzle-orm";
 import { inferhubConfigKeys, providerAccounts } from "../../persistence/schema";
 import { decryptCredentialToString, encryptCredential, hashSecret } from "../../security/crypto";
-import type { CartethyiaDatabase } from "../../persistence/db-handle";
+import type { CartethyiaDatabase } from "../../persistence/postgres";
 
 /** Shape returned to the console: whether a key is set, and never the key. */
 export interface InferhubKeyStatus {
