@@ -27,6 +27,7 @@ import type { TrustedProxyBoundary } from "../../config";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
 import type { TelemetryBatchBuffer } from "../../observability/telemetry-buffer";
 import type { ModelStrikeService } from "../../security/model-abuse";
+import { createProcessConcurrencyMiddleware } from "./process-concurrency-guard";
 
 /** Shared state/context carried by every ordered transport stage. */
 export interface TransportPipelineContext {
@@ -103,6 +104,7 @@ export function createTransportPipeline(context: TransportPipelineContext): Tran
     }),
   ];
   const mountRoot = (app: Elysia<any, any, any, any, any, any, any, any>): void => {
+    app.use(createProcessConcurrencyMiddleware());
     app.use(
       createRequestContextMiddleware({
         stateStore: context.stateStore,
