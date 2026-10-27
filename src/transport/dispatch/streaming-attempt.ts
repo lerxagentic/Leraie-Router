@@ -65,6 +65,7 @@ import {
   terminalFailure,
 } from "./attempt-finalize";
 import { drainAbortReason } from "../shutdown-notice";
+import { THINKING_LOOP_MARKER, ThinkingLoopDetector } from "./streaming/thinking-loop";
 
 /** Collaborators the streaming branch reads from the dispatch handler. */
 export interface StreamingDispatchDeps {
@@ -353,16 +354,36 @@ export async function dispatchStreamingAttempt(input: StreamingDispatchInput): P
     }
     return toEnqueue.length > 0;
   };
+  const loopDetector = new ThinkingLoopDetector();
+  let loopDetected = false;
   const enqueueEvent = (
     event: CanonicalEvent,
     controller: ReadableStreamDefaultController<Uint8Array>,
   ): boolean => {
+    if (loopDetected) return false;
     const timestampedEvent = { ...event, timestamp: Date.now() };
     streamedEvents.push(timestampedEvent);
     lastEventAtMs = timestampedEvent.timestamp;
 
     if (event.type === "content_delta" && firstContentDeltaAtMs === undefined) {
       firstContentDeltaAtMs = timestampedEvent.timestamp;
+    }
+
+    if (event.type === "content_delta" && event.content.kind === "reasoning" && typeof event.content.summary === "string") {
+      const loopReason = loopDetector.push(event.content.summary);
+      if (loopReason) {
+        loopDetected = true;
+        pushEncodedEvent(timestampedEvent, controller);
+        const terminalEvent: CanonicalEvent = {
+          type: "terminal",
+          sequence_number: event.sequence_number + 1,
+          state: "complete",
+          stop_reason: "length",
+          provider_stop_reason: THINKING_LOOP_MARKER,
+        };
+        pushEncodedEvent({ ...terminalEvent, timestamp: Date.now() }, controller);
+        return true;
+      }
     }
 
     if (event.type === "terminal") {
@@ -582,6 +603,10 @@ export async function dispatchStreamingAttempt(input: StreamingDispatchInput): P
     async pull(controller) {
       pullActive = true;
       try {
+        if (loopDetected) {
+          await finalizeStream(controller);
+          return;
+        }
         if (state.abortController.signal.aborted) {
           const reason = state.abortController.signal.reason;
           // A drain is a *server* close while the client is still reading:
@@ -647,7 +672,12 @@ export async function dispatchStreamingAttempt(input: StreamingDispatchInput): P
               return;
             }
             sawUpstreamActivity = true;
-            if (enqueueEvent(result.value, controller)) return;
+            if (enqueueEvent(result.value, controller)) {
+              if (loopDetected) {
+                await finalizeStream(controller);
+              }
+              return;
+            }
           }
         } catch (err) {
           clearStallWatchdog();
