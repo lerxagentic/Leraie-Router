@@ -165,6 +165,7 @@ interface MergedModelRow {
   toolCall: boolean;
   webSearch: boolean;
   enabled: boolean;
+  proOnly?: boolean | null;
 }
 
 /**
@@ -187,6 +188,7 @@ function mergeModelCatalog(
       toolCall: row.toolCall,
       webSearch: row.webSearch,
       enabled: row.enabled,
+      proOnly: row.proOnly,
     }));
 }
 
@@ -224,6 +226,7 @@ const MODEL_COLUMNS = {
   toolCall: models.toolCall,
   webSearch: models.webSearch,
   enabled: models.enabled,
+  proOnly: models.proOnly,
 } as const;
 
 const ACCOUNT_COLUMNS = {
@@ -236,6 +239,7 @@ const ACCOUNT_COLUMNS = {
   modelCooldowns: providerAccounts.modelCooldowns,
   lastErrorCategory: providerAccounts.lastErrorCategory,
   lastRemainingCredit: providerAccounts.lastRemainingCredit,
+  quotaPlan: providerAccounts.quotaPlan,
 } as const;
 
 const ALIAS_COLUMNS = {
@@ -603,6 +607,10 @@ class RouteCatalogRepository {
           ...(routeUserAgent === undefined ? {} : { user_agent: routeUserAgent }),
           tenant_id: rowTenantId,
           provider_account_id: account.id,
+          ...(model.proOnly === true ? { pro_only: true } : {}),
+          ...(account.quotaPlan === null || account.quotaPlan === undefined
+            ? {}
+            : { account_plan: account.quotaPlan }),
           ...(() => {
             const credit = resolveCreditProtection(model.providerId, rowTenantId);
             return {

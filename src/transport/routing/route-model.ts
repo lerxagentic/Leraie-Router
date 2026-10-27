@@ -79,6 +79,10 @@ export interface RouteCandidate {
    * Absent/`true` preserves the existing invariant: no account configured
    * means the route is unusable, not silently public. */
   readonly requires_account?: boolean;
+  /** True when the model is restricted to paid/pro tier accounts by the upstream. */
+  readonly pro_only?: boolean;
+  /** The plan reported by the account's quota read (e.g. "Free Plan Subscription"). */
+  readonly account_plan?: string | null;
 }
 
 /**

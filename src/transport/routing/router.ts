@@ -22,6 +22,7 @@ import {
 } from "./route-model";
 import { candidateSupportsRequest, type RequiredCapability } from "../translation/capabilities";
 import { isProviderCircuitOpen } from "./provider-circuit";
+import { planAllowsCandidate } from "./plan-gate";
 import { belowUsageFloor, type UsageFloorPolicy } from "./usage-floor";
 import { sharedClaudeSlowLanes } from "../../providers/integrations/claude/claude-slow-lane";
 import type { ProviderQuotaWindow } from "../../providers/quota/quota-contracts";
@@ -868,6 +869,8 @@ export class RoutingEngine {
       if (eligible.length === 0)
         throw capabilityUnsupportedError(requiredCapabilities.join(", "));
     }
+    const planAllowed = eligible.filter((candidate) => planAllowsCandidate(candidate));
+    if (planAllowed.length > 0) eligible = planAllowed;
     eligible = this.applyProviderRouting(eligible, snapshot, tid);
     // Per-provider breaker: a provider whose circuit is open is tried after
     // every provider that is not. Same shape as the cooling rule above and for

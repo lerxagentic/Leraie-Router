@@ -207,6 +207,11 @@ export const providerAccounts = pgTable("provider_accounts", {
    * been fetched.
    */
   lastRemainingCredit: numeric("last_remaining_credit", { precision: 16, scale: 4 }),
+  /**
+   * The plan reported by the last quota refresh (e.g. "Free Plan Subscription",
+   * "Pro"). Nullable. Used by the pro_only routing gate.
+   */
+  quotaPlan: text("quota_plan"),
 
   },
   (table) => [
@@ -290,6 +295,7 @@ export const models = pgTable(
     source: text("source"),
     sourceUpdatedAt: timestamp("source_updated_at", { withTimezone: true }),
     enabled: boolean("enabled").notNull().default(true),
+    proOnly: boolean("pro_only"),
   },
   (table) => [
     uniqueIndex("models_provider_model_route_uidx").on(
