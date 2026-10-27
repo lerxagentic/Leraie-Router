@@ -7,6 +7,7 @@ import type {
   ProviderAdapter,
   ProviderDispatchContext,
 } from "../provider-registry";
+import type { ProviderModelDiscovery } from "../discovery/discovery-types";
 import { providerBaseUrl } from "../provider-metadata";
 import { defineModel, isResponsesNativeModelId } from "../model-definition";
 import { createApiKeyAdapter, type ApiKeyProviderSpec } from "./configured-provider";
@@ -19,6 +20,7 @@ import { applyParamQuirks } from "../../transport/translation/quirks";
 import { buildClaudeMessagesRequest, filterClaudeCustomHeaders } from "./claude-messages";
 import { isRecord } from "../../protocol/primitives";
 import { sendClaudeMessagesRequest } from "../../protocol/transport/messages";
+import { resolveInboundSessionId } from "../operations/session-resolution";
 
 const INFERHUB_CACHE_CONTROL = { type: "ephemeral", ttl: "1h" } as const;
 
@@ -96,6 +98,32 @@ export function ensureInferhubMessagesTextBreakpoints(
 export const INFERHUB_BASE_URL = providerBaseUrl("inferhub");
 export const INFERHUB_PROVIDER_ID = "inferhub" as const;
 
+export function inferhubModelDiscovery(): () => Promise<ProviderModelDiscovery> {
+  return async () => async (input) => {
+    const { fetchOpenAICompatibleModels } = await import("../discovery/openai-model-discovery");
+    const models = await fetchOpenAICompatibleModels({
+      baseUrl: input.baseUrl,
+      providerId: INFERHUB_PROVIDER_ID,
+      headers: { authorization: `Bearer ${input.credential}` },
+      ...(input.fetcher ? { fetcher: input.fetcher } : {}),
+    });
+    const source: readonly ModelDefinition[] = models === null || models.length === 0 ? INFERHUB_MODELS : models;
+    return source.map((model) =>
+      isInferhubClaudeModel(model.modelId)
+        ? { ...model, wireFamily: "messages" as const, endpointPath: "/v1/messages" }
+        : model,
+    );
+  };
+}
+
+function inferhubSessionHeaders(
+  context: ProviderDispatchContext,
+  request?: CanonicalRequest,
+): Record<string, string> {
+  const sessionId = resolveInboundSessionId(context, request);
+  return sessionId === undefined ? {} : { "X-Session-Id": sessionId };
+}
+
 /**
  * Chat + Responses legs of InferHub. Claude-backed models are routed to
  * `InferhubMessagesAdapter` by wire family instead (see
@@ -110,6 +138,7 @@ const INFERHUB_CHAT_SPEC: ApiKeyProviderSpec = {
   // InferHub is explicitly provisioned for the gateway identity; bespoke
   // first-party adapters (Codex, Claude Code) are untouched by this flag.
   gatewayUserAgent: true,
+  buildExtraHeaders: (context, request) => inferhubSessionHeaders(context, request),
 };
 
 /** InferHub — full marketplace catalog from your paste (80+ models, 4 providers ag/cc/cb/cbcn/cx/ocg/ali/mimo/zai). Context sizes via websearch (Claude 1M/200k, Gemini 1M). */
@@ -247,6 +276,7 @@ export class InferhubMessagesAdapter implements ProviderAdapter {
       // carries the gateway identity; bespoke first-party paths never do.
       gatewayUserAgent: GATEWAY_USER_AGENT,
     });
+    Object.assign(outbound.headers, inferhubSessionHeaders(context, request));
     yield* sendClaudeMessagesRequest(
       outbound.url,
       outbound.headers,

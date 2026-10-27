@@ -53,11 +53,13 @@ export async function fetchOpenAICompatibleModels(
       const parsedContext =
         positiveNumber(entry.context_length) ??
         positiveNumber((entry as Record<string, unknown>).input_token_limit) ??
+        positiveNumber((entry as Record<string, unknown>).context_window) ??
         positiveNumber(entry.contextWindow) ??
         positiveNumber(entry.max_input_tokens);
       const contextWindow = parsedContext ?? fallback?.contextLimit ?? 200_000;
 
       const parsedOutput =
+        positiveNumber(entry.max_completion_tokens) ??
         positiveNumber(entry.max_output_tokens) ??
         positiveNumber((entry as Record<string, unknown>).max_output_tokens) ??
         positiveNumber(entry.maxTokens);
