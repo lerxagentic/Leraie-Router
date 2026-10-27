@@ -17,10 +17,31 @@
  * password re-authentication.
  */
 import type { CartethyiaDatabase } from "../../persistence/postgres";
+import type { Table } from "drizzle-orm";
+import {
+  models,
+  providerAccounts,
+  providerOauthStates,
+  providerRoutingSettings,
+  providers,
+  tenantDisabledModels,
+} from "../../persistence/schema";
 import { ConsoleDomainError } from "../shared/errors";
-import { tablesForSection } from "./contracts";
-import type { BackupSection } from "./contracts";
-import { deleteAll, exportBackup, applyRestore, type DeleteAllResult, type DeleteAllScope } from "./store";
+import { tablesForSection, tableName, TENANT_TABLE } from "./contracts";
+import type {
+  BackupSection,
+  RestoreWarning,
+  ValidatedRestore,
+  ValidatedTable,
+} from "./contracts";
+import {
+  applyRestore,
+  decompressBackup,
+  deleteAll,
+  exportBackup,
+  type DeleteAllResult,
+  type DeleteAllScope,
+} from "./store";
 import { detectFormat, restoreOrder, validateRestorePayload } from "./validate";
 import { convert9RouterBackup, type ImportReport } from "./nine-router";
 import { convertToNineRouterExport, type NineRouterExportReport } from "./to-nine-router";
@@ -37,13 +58,150 @@ export interface ExportOptions {
   readonly password: string;
   /** The tenant whose rows are exported. Never another tenant's. */
   readonly tenantId: string;
+  readonly compressed?: boolean;
+}
+
+export interface BackupInspectionRow {
+  readonly section: string;
+  readonly table: string;
+  readonly count: number;
+  readonly supported: boolean;
+}
+
+export interface BackupInspection {
+  readonly format: "native" | "nine_router";
+  readonly version: number;
+  readonly exportedAt: string;
+  readonly rows: readonly BackupInspectionRow[];
+  readonly total: number;
+  readonly warnings: readonly RestoreWarning[];
 }
 
 export interface ImportResult {
   readonly restored: Record<string, number>;
   readonly skipped: Record<string, number>;
+  readonly warnings?: readonly RestoreWarning[];
   readonly report?: ImportReport;
   readonly format: "native" | "nine_router";
+}
+
+export interface BackupRestoreSelection {
+  readonly tables?: readonly string[];
+}
+
+function restrictToSelection(
+  validation: ValidatedRestore,
+  selection: BackupRestoreSelection | undefined,
+): ValidatedRestore {
+  const wanted = selection?.tables;
+  if (wanted === undefined || wanted.length === 0) return validation;
+  const selected = new Set(wanted);
+  const tables = new Map<Table, ValidatedTable>();
+  for (const [table, entry] of validation.tables) {
+    if (selected.has(tableName(table))) tables.set(table, entry);
+  }
+  return {
+    ...validation,
+    tables,
+    tenantRows: tables.size > 0 ? validation.tenantRows : [],
+  };
+}
+
+function toBackupBytes(input: string): Uint8Array {
+  if (input.trimStart().startsWith("{")) return Buffer.from(input, "utf8");
+  return Buffer.from(input, "base64");
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeBackupInput(input: unknown): unknown {
+  if (input === null || input === undefined) return input;
+  if (input instanceof Uint8Array) return parseBackupText(decompressBackup(input));
+  if (input instanceof ArrayBuffer) return parseBackupText(decompressBackup(new Uint8Array(input)));
+  if (typeof input === "string") return parseBackupText(decompressBackup(toBackupBytes(input)));
+  if (isPlainObject(input) && typeof input["bytes"] === "string" && Object.keys(input).length <= 3) {
+    return parseBackupText(decompressBackup(toBackupBytes(input["bytes"])));
+  }
+  return input;
+}
+
+function parseBackupText(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    throw new ConsoleDomainError("invalid_request", 400, "that file is not a JSON backup");
+  }
+}
+
+async function omitRowsForUnavailableProviders(
+  db: CartethyiaDatabase,
+  validation: ValidatedRestore,
+  tenantId: string,
+): Promise<ValidatedRestore> {
+  const existingProviders = await db
+    .select({ id: providers.id, tenantId: providers.tenantId })
+    .from(providers);
+  const importedProviders = validation.tables.get(providers)?.rows ?? [];
+  const providerIds = new Set([
+    ...existingProviders
+      .filter((provider) => provider.tenantId === null || provider.tenantId === tenantId)
+      .map((provider) => provider.id),
+    ...importedProviders.map((provider) => String(provider["id"])),
+  ]);
+  const tables = new Map(validation.tables);
+  const warnings = [...validation.warnings];
+  const counts = { ...validation.counts };
+
+  for (const table of [providerAccounts, models, tenantDisabledModels, providerRoutingSettings]) {
+    const entry = tables.get(table);
+    if (entry === undefined) continue;
+    const rows = entry.rows.filter(
+      (row) => typeof row["provider_id"] === "string" && providerIds.has(row["provider_id"]),
+    );
+    if (rows.length === entry.rows.length) continue;
+    tables.set(table, { ...entry, rows });
+    counts[tableName(table)] = rows.length;
+    warnings.push({
+      table: tableName(table),
+      column: "provider_id",
+      reason: "referenced a provider not available in this installation; those rows were skipped",
+    });
+  }
+
+  const accountRows = tables.get(providerAccounts)?.rows ?? [];
+  const replacesTenantAccounts = accountRows.length > 0;
+  const existingAccounts = await db
+    .select({ id: providerAccounts.id, tenantId: providerAccounts.tenantId })
+    .from(providerAccounts);
+  const accountIds = new Set(
+    existingAccounts
+      .filter((account) => !replacesTenantAccounts || account.tenantId !== tenantId)
+      .map((account) => account.id),
+  );
+  for (const account of accountRows) {
+    if (typeof account["id"] === "string") accountIds.add(account["id"]);
+  }
+
+  const oauthEntry = tables.get(providerOauthStates);
+  if (oauthEntry !== undefined) {
+    const rows = oauthEntry.rows.filter(
+      (row) =>
+        typeof row["provider_account_id"] === "string" && accountIds.has(row["provider_account_id"]),
+    );
+    if (rows.length !== oauthEntry.rows.length) {
+      tables.set(providerOauthStates, { ...oauthEntry, rows });
+      counts[tableName(providerOauthStates)] = rows.length;
+      warnings.push({
+        table: tableName(providerOauthStates),
+        column: "provider_account_id",
+        reason: "referenced an account not restored or available in this installation; those rows were skipped",
+      });
+    }
+  }
+
+  return { ...validation, tables, counts, warnings };
 }
 
 function sectionsOrDefault(sections: readonly BackupSection[] | undefined): readonly BackupSection[] {
@@ -89,37 +247,100 @@ export class BackupService {
     password: unknown,
     payload: unknown,
     tenantId: string,
+    selection?: BackupRestoreSelection,
   ): Promise<ImportResult> {
     if (typeof password !== "string" || !(await this.options.verifyPassword(password))) {
       throw new ConsoleDomainError("unauthorized", 401, "password is incorrect");
     }
 
-    const detected = detectFormat(payload);
+    const detected = detectFormat(normalizeBackupInput(payload));
     if (detected.kind === "unknown") {
       throw new ConsoleDomainError("invalid_request", 400, detected.reason);
     }
 
     if (detected.kind === "nine_router") {
       const { payload: converted, report } = convert9RouterBackup(detected.payload, tenantId);
-      const result = await this.apply(converted, tenantId);
+      const result = await this.apply(converted, tenantId, selection);
       return { ...result, report, format: "nine_router" };
     }
 
+    const result = await this.apply(detected.payload, tenantId, selection);
+    return { ...result, format: "native" };
+  }
+
+  async restoreFirstBoot(payload: unknown, tenantId: string): Promise<ImportResult> {
+    const detected = detectFormat(normalizeBackupInput(payload));
+    if (detected.kind !== "native") {
+      throw new ConsoleDomainError(
+        "invalid_request",
+        400,
+        detected.kind === "unknown" ? detected.reason : "first-boot restore accepts a Cartethyia backup only",
+      );
+    }
     const result = await this.apply(detected.payload, tenantId);
     return { ...result, format: "native" };
+  }
+
+  inspect(payload: unknown): BackupInspection {
+    const detected = detectFormat(normalizeBackupInput(payload));
+    if (detected.kind === "unknown") {
+      throw new ConsoleDomainError("invalid_request", 400, detected.reason);
+    }
+    const candidate = detected.kind === "native" ? detected.payload : null;
+    if (candidate === null) {
+      return {
+        format: "nine_router",
+        version: 0,
+        exportedAt: "",
+        rows: [],
+        total: 0,
+        warnings: [],
+      };
+    }
+    const validation = validateRestorePayload(candidate, "");
+    const warnings = validation.ok ? validation.value.warnings : [];
+    const knownTables = new Set(
+      [...tablesForSection("config"), ...tablesForSection("telemetry"), TENANT_TABLE].map(tableName),
+    );
+
+    const rows: BackupInspectionRow[] = [];
+    let total = 0;
+    const sections = isPlainObject(candidate.sections) ? candidate.sections : {};
+    for (const [section, value] of Object.entries(sections)) {
+      if (!isPlainObject(value)) continue;
+      for (const [table, list] of Object.entries(value)) {
+        if (!Array.isArray(list)) continue;
+        rows.push({ section, table, count: list.length, supported: knownTables.has(table) });
+        total += list.length;
+      }
+    }
+    rows.sort((left, right) => right.count - left.count || left.table.localeCompare(right.table));
+
+    return {
+      format: "native",
+      version: typeof candidate.version === "number" ? candidate.version : 0,
+      exportedAt: typeof candidate.exportedAt === "string" ? candidate.exportedAt : "",
+      rows,
+      total,
+      warnings,
+    };
   }
 
   /** Validates and applies a native payload. Shared by both formats. */
   private async apply(
     payload: unknown,
     tenantId: string,
-  ): Promise<{ restored: Record<string, number>; skipped: Record<string, number> }> {
+    selection?: BackupRestoreSelection,
+  ): Promise<{ restored: Record<string, number>; skipped: Record<string, number>; warnings: readonly RestoreWarning[] }> {
     const validation = validateRestorePayload(payload, tenantId);
     if (!validation.ok) {
       throw new ConsoleDomainError("invalid_request", 400, validation.error);
     }
     try {
-      return await applyRestore(this.options.db, validation.value, restoreOrder(), tenantId);
+      const scoped = restrictToSelection(validation.value, selection);
+      const compatible = await omitRowsForUnavailableProviders(this.options.db, scoped, tenantId);
+      const applied = await applyRestore(this.options.db, compatible, restoreOrder(), tenantId);
+      return { ...applied, warnings: compatible.warnings };
     } catch (error) {
       // The message carries table and column names only — the store never
       // interpolates a cell value — so a failed restore cannot leak credentials

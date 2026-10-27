@@ -53,6 +53,8 @@ import {
   telemetryEvents,
   telemetryUsageTotals,
 } from "../../persistence/schema";
+import { gzipSync, gunzipSync } from "node:zlib";
+import { decryptCredentialToString, encryptCredential } from "../../security/crypto";
 import {
   BACKUP_APP,
   BACKUP_VERSION,
@@ -62,7 +64,9 @@ import {
   TENANT_TABLE,
   columnNames,
   ownershipOf,
+  payloadNameOf,
   replaceModeOf,
+  sealedColumns,
   tableName,
   type BackupBytes,
   type BackupDate,
@@ -71,6 +75,30 @@ import {
   type BackupRow,
   type ValidatedRestore,
 } from "./contracts";
+
+function toBuffer(value: unknown): Buffer | null {
+  if (Buffer.isBuffer(value)) return value;
+  if (value instanceof Uint8Array) return Buffer.from(value);
+  return null;
+}
+
+function decodeSealedForPayload(value: unknown): string | null {
+  const bytes = toBuffer(value);
+  if (bytes === null) return null;
+  try {
+    return decryptCredentialToString(bytes);
+  } catch {
+    return null;
+  }
+}
+
+function sealSecret(value: unknown, table: string, column: string): Buffer | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "string") {
+    throw new Error(`${table}.${column} must be restored as a plaintext string, got ${typeof value}`);
+  }
+  return encryptCredential(value);
+}
 
 /** Encodes one cell into a JSON-safe value. */
 function encodeCell(value: unknown, dataType: string): unknown {
@@ -175,6 +203,7 @@ async function exportTable(
   tenantId: string,
 ): Promise<BackupRow[]> {
   const index = columnIndex(table);
+  const sealed = sealedColumns(table);
   const rows = (await db
     .select()
     .from(table)
@@ -182,9 +211,39 @@ async function exportTable(
     .limit(MAX_ROWS_PER_TABLE)) as Array<Record<string, unknown>>;
   return rows.map((row) => {
     const out: BackupRow = {};
-    for (const [name, { key, dataType }] of index) out[name] = encodeCell(row[key], dataType);
+    for (const [name, { key, dataType }] of index) {
+      out[payloadNameOf(table, name)] = sealed.has(name)
+        ? decodeSealedForPayload(row[key])
+        : encodeCell(row[key], dataType);
+    }
     return out;
   });
+}
+
+export function compressBackup(payload: unknown): Buffer {
+  return gzipSync(Buffer.from(JSON.stringify(payload), "utf8"));
+}
+
+/** The gzip magic, so a file can be recognised without trusting its name. */
+const GZIP_MAGIC = [0x1f, 0x8b] as const;
+
+/** Whether `bytes` starts with the gzip magic. */
+export function isGzipBytes(bytes: Uint8Array): boolean {
+  return GZIP_MAGIC.every((byte, index) => bytes[index] === byte);
+}
+
+/**
+ * Undoes {@link compressBackup}.
+ */
+export function decompressBackup(bytes: Uint8Array): string {
+  if (!isGzipBytes(bytes)) return Buffer.from(bytes).toString("utf8");
+  try {
+    return gunzipSync(bytes).toString("utf8");
+  } catch (error) {
+    throw new Error(
+      `that file is named or marked as gzip but could not be decompressed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /**
@@ -230,12 +289,16 @@ export async function exportBackup(
 function toValues(table: Table, row: BackupRow): Record<string, unknown> {
   const index = columnIndex(table);
   const allowed = columnNames(table);
+  const sealed = sealedColumns(table);
+  const name = tableName(table);
   const values: Record<string, unknown> = {};
-  for (const [name, cell] of Object.entries(row)) {
-    if (!allowed.has(name)) throw new Error(`${tableName(table)}.${name} is not a known column`);
-    const entry = index.get(name);
+  for (const [column, cell] of Object.entries(row)) {
+    if (!allowed.has(column)) throw new Error(`${name}.${column} is not a known column`);
+    const entry = index.get(column);
     if (entry === undefined) continue;
-    values[entry.key] = decodeCell(cell, entry.dataType);
+    values[entry.key] = sealed.has(column)
+      ? sealSecret(cell, name, column)
+      : decodeCell(cell, entry.dataType);
   }
   return values;
 }

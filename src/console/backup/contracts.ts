@@ -358,6 +358,54 @@ const LEGACY_DROPPED_COLUMNS: Readonly<Record<string, readonly string[]>> = {
 
 const DROPPED_CACHE = new WeakMap<Table, ReadonlySet<string>>();
 
+/**
+ * Secret-carrying columns that are sealed under this installation's encryption
+ * key.
+ *
+ * During export their plaintext is written under a human-meaningful alias
+ * rather than the column's own name (e.g. `access_token` instead of
+ * `credential_ciphertext`). During restore the alias is mapped back to the
+ * column name and the plaintext is re-encrypted under the receiving
+ * installation's key.
+ */
+const SEALED_COLUMNS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
+  provider_accounts: { credential_ciphertext: "access_token" },
+  provider_oauth_states: {
+    refresh_ciphertext: "refresh_token",
+    client_secret_ciphertext: "client_secret",
+  },
+  network_pools: { credential_ciphertext: "proxy_credential" },
+  api_keys: { key_encrypted: "api_key" },
+  share_links: { token_encrypted: "share_token" },
+};
+
+/** The sealed columns of `table`, by column name. */
+export function sealedColumns(table: Table): ReadonlySet<string> {
+  return new Set(Object.keys(SEALED_COLUMNS[tableName(table)] ?? {}));
+}
+
+/**
+ * The name a column travels under in a payload.
+ *
+ * Returns the column's own name for anything not sealed, so an export loop does
+ * not have to branch on the answer.
+ */
+export function payloadNameOf(table: Table, column: string): string {
+  return SEALED_COLUMNS[tableName(table)]?.[column] ?? column;
+}
+
+/**
+ * A payload's secret names for `table`, mapped to the columns they fill.
+ */
+export function sealedAliases(table: Table): ReadonlyMap<string, string> {
+  const out = new Map<string, string>();
+  const allowed = columnNames(table);
+  for (const [column, alias] of Object.entries(SEALED_COLUMNS[tableName(table)] ?? {})) {
+    if (!allowed.has(alias)) out.set(alias, column);
+  }
+  return out;
+}
+
 /** Column names a table once carried and has since dropped, still accepted on restore. */
 export function droppedColumns(table: Table): ReadonlySet<string> {
   const cached = DROPPED_CACHE.get(table);
@@ -399,11 +447,18 @@ export interface RestoreResult {
   readonly skipped: Record<string, number>;
 }
 
+export interface RestoreWarning {
+  readonly table?: string;
+  readonly column?: string;
+  readonly reason: string;
+}
+
 /** A payload that passed validation: tables resolved to real schema objects. */
 export interface ValidatedRestore {
   readonly tables: ReadonlyMap<Table, ValidatedTable>;
   readonly tenantRows: readonly BackupRow[];
   readonly counts: Record<string, number>;
+  readonly warnings: readonly RestoreWarning[];
 }
 
 export type RestoreValidation =

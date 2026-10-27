@@ -20,7 +20,8 @@ import { invalidateApiKeyCache } from "../../security/api-key-auth";
 import { ConsoleDomainError, errorResponse, requireAnyScope } from "../shared/errors";
 import { MAX_BACKUP_BYTES } from "./contracts";
 import type { BackupSection } from "./contracts";
-import { DELETE_ALL_SCOPES } from "./store";
+import { compressBackup, DELETE_ALL_SCOPES } from "./store";
+import { NO_COMPRESS_HEADER } from "../response-compression";
 import type { BackupService } from "./service";
 import type { AuditSink } from "../domains/audit/contracts";
 
@@ -77,11 +78,17 @@ const BACKUP_SCOPES = ["dashboard:write"] as const;
 const importBody = t.Object({
   password: t.String(),
   backup: t.Unknown(),
+  tables: t.Optional(t.Array(t.String())),
+});
+
+const inspectBody = t.Object({
+  backup: t.Unknown(),
 });
 
 const exportQuery = t.Object({
   password: t.String(),
   sections: t.Optional(t.String()),
+  compressed: t.Optional(t.String()),
   /** `9router` emits a file the 9Router's Import Database accepts. */
   format: t.Optional(t.Union([t.Literal("native"), t.Literal("9router")])),
 });
@@ -120,6 +127,7 @@ export function createBackupRoutes(config: BackupRoutesConfig): Elysia {
         }
         const backup = config.backupFor(request);
         const sections = parseSections(query.sections);
+        const compressed = query.compressed === "1";
         if (query.format === "9router") {
           // The 9Router shape is a plain JSON payload (no password echo, no
           // native envelope); credentials are decrypted inside the converter
@@ -135,15 +143,20 @@ export function createBackupRoutes(config: BackupRoutesConfig): Elysia {
         const { payload } = await backup.export({
           password: query.password,
           tenantId: access.tenantId,
+          compressed,
           ...(sections === undefined ? {} : { sections }),
         });
-        set.headers["content-disposition"] = `attachment; filename="cartethyia-backup-${new Date()
-          .toISOString()
-          .replace(/[:.]/g, "-")}.json"`;
-        set.headers["content-type"] = "application/json; charset=utf-8";
-        // A backup must never be cached by a proxy or the browser.
+        const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
         set.headers["cache-control"] = "no-store";
-        return payload;
+        if (!compressed) {
+          set.headers["content-disposition"] = `attachment; filename="cartethyia_backup_${stamp}.json"`;
+          set.headers["content-type"] = "application/json; charset=utf-8";
+          return payload;
+        }
+        const bytes = compressBackup(payload);
+        set.headers["content-type"] = "application/json; charset=utf-8";
+        set.headers[NO_COMPRESS_HEADER] = "1";
+        return { compressed: true, filename: `cartethyia_backup_${stamp}.json.gz`, bytes: bytes.toString("base64") };
       } catch (error) {
         return errorResponse(error, set, "Backup export failed");
       }
@@ -175,7 +188,8 @@ export function createBackupRoutes(config: BackupRoutesConfig): Elysia {
         // from nowhere else. A request body may not name the tenant it writes
         // into: that would let any holder of the scope import into, and
         // overwrite, a tenant they are not.
-        const result = await config.backupFor(request).restore(body.password, body.backup, access.tenantId);
+        const selection = body.tables !== undefined ? { tables: body.tables } : undefined;
+        const result = await config.backupFor(request).restore(body.password, body.backup, access.tenantId, selection);
         // Routing-visible write: the restore has committed, so the cached
         // snapshot must be rebuilt before the next `/v1/*` dispatch.
         await config.snapshotInvalidator?.invalidate();
@@ -196,6 +210,29 @@ export function createBackupRoutes(config: BackupRoutesConfig): Elysia {
         return result;
       } catch (error) {
         return errorResponse(error, set, "Backup import failed");
+      }
+    })
+    .post("/inspect", { body: inspectBody }, async ({ request, body, set }) => {
+      try {
+        const access = requireAnyScope(config.accessResolver(request), BACKUP_SCOPES);
+        if (access.tenantId === null) {
+          throw new ConsoleDomainError("tenant_required", 403, "Tenant isolation required");
+        }
+        const declared = Number(request.headers.get("content-length") ?? "0");
+        const actualBytes = JSON.stringify(body ?? null).length;
+        if (
+          (Number.isFinite(declared) && declared > MAX_BACKUP_BYTES) ||
+          actualBytes > MAX_BACKUP_BYTES
+        ) {
+          set.status = 413;
+          return {
+            error: `backup exceeds the ${MAX_BACKUP_BYTES} byte limit`,
+            code: "request_too_large",
+          };
+        }
+        return config.backupFor(request).inspect(body.backup);
+      } catch (error) {
+        return errorResponse(error, set, "Backup inspection failed");
       }
     })
     .get("/auto-backup", async ({ request, set }) => {

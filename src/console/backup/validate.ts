@@ -14,6 +14,7 @@
  */
 import type { Table } from "drizzle-orm";
 import { getTableColumns } from "drizzle-orm";
+import { decryptCredentialToString } from "../../security/crypto";
 import {
   BACKUP_APP,
   BACKUP_SECTIONS,
@@ -25,14 +26,37 @@ import {
   columnNames,
   droppedColumns,
   findTable,
+  payloadNameOf,
+  sealedAliases,
+  sealedColumns,
   tableName,
   type BackupRow,
   type BackupSection,
   type RestoreValidation,
+  type RestoreWarning,
   type ValidatedRestore,
   type ValidatedTable,
 } from "./contracts";
 import { apiKeys, shareLinks } from "../../persistence/schema";
+
+function normalizeLegacyCiphertext(table: Table, row: Record<string, unknown>): Record<string, unknown> {
+  const normalized = { ...row };
+  for (const column of sealedColumns(table)) {
+    const cell = normalized[column];
+    if (!isPlainObject(cell) || Object.keys(cell).length !== 1 || typeof cell["__bytes"] !== "string") continue;
+    try {
+      normalized[payloadNameOf(table, column)] = decryptCredentialToString(
+        Buffer.from(cell["__bytes"], "base64"),
+      );
+      delete normalized[column];
+    } catch {
+      // Old exports carry ciphertext rather than portable plaintext. Only the
+      // original encryption key can open it; otherwise the validator reports
+      // and drops the credential instead of inserting unusable bytes.
+    }
+  }
+  return normalized;
+}
 function legacyModelList(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) return undefined;
   return value;
@@ -143,6 +167,7 @@ export function validateRestorePayload(payload: unknown, tenantId: string): Rest
 
   const tables = new Map<Table, ValidatedTable>();
   const counts: Record<string, number> = {};
+  const warnings: RestoreWarning[] = [];
   let tenantRows: readonly BackupRow[] = [];
 
   for (const [sectionName, sectionValue] of Object.entries(payload.sections)) {
@@ -169,9 +194,25 @@ export function validateRestorePayload(payload: unknown, tenantId: string): Rest
       const allowed = columnNames(table);
       const dropped = droppedColumns(table);
       const types = columnTypes(table);
+      const sealed = sealedColumns(table);
+      const aliases = sealedAliases(table);
+      const reported = new Set<string>();
       const rows: BackupRow[] = [];
-      for (let i = 0; i < value.length; i++) {
-        const row = value[i];
+      const capped = Math.min(value.length, MAX_ROWS_PER_TABLE);
+      const rowsIn: readonly unknown[] =
+        aliases.size === 0
+          ? value
+          : value.slice(0, capped).map((row) => {
+              if (!isPlainObject(row)) return row;
+              const mapped: Record<string, unknown> = {};
+              for (const [column, cell] of Object.entries(normalizeLegacyCiphertext(table, row))) {
+                mapped[aliases.get(column) ?? column] = cell;
+              }
+              return mapped;
+            });
+
+      for (let i = 0; i < rowsIn.length; i++) {
+        const row = rowsIn[i];
         if (!isPlainObject(row)) return { ok: false, error: `${name}[${i}] must be a row object` };
         // Older v1 backups used separate allow/deny columns. Convert them to
         // the current single policy before dropping retired column names.
@@ -182,7 +223,27 @@ export function validateRestorePayload(payload: unknown, tenantId: string): Rest
         const sanitizedRow = dropped.size > 0 && Object.keys(sourceRow).some((column) => dropped.has(column))
           ? Object.fromEntries(Object.entries(sourceRow).filter(([column]) => !dropped.has(column)))
           : sourceRow;
-        for (const [column, cell] of Object.entries(sanitizedRow)) {
+
+        let sealedRow = sanitizedRow;
+        if (sealed.size > 0) {
+          for (const column of sealed) {
+            if (!(column in sealedRow)) continue;
+            const cell = sealedRow[column];
+            if (cell === null || cell === undefined || typeof cell === "string") continue;
+            if (!reported.has(column)) {
+              reported.add(column);
+              warnings.push({
+                table: name,
+                column,
+                reason:
+                  "held ciphertext sealed under another install's key; the credential was not restored, so re-authorize it",
+              });
+            }
+            sealedRow = Object.fromEntries(Object.entries(sealedRow).filter(([key]) => key !== column));
+          }
+        }
+
+        for (const [column, cell] of Object.entries(sealedRow)) {
           if (!allowed.has(column)) {
             return { ok: false, error: `${name}.${column} is not a column of ${tableName(table)}` };
           }
@@ -192,6 +253,12 @@ export function validateRestorePayload(payload: unknown, tenantId: string): Rest
           // strings into; anything else (a nested array, an arbitrary object) is
           // rejected rather than coerced into something the driver would guess.
           if (types.get(column) === "json") continue;
+          if (sealed.has(column)) {
+            if (typeof cell !== "string" && cell !== null && cell !== undefined) {
+              return { ok: false, error: `${name}[${i}].${column} must be a plaintext string or null` };
+            }
+            continue;
+          }
           if (isPlainObject(cell)) {
             const carrier = Object.keys(cell);
             const isCarrier =
@@ -210,8 +277,8 @@ export function validateRestorePayload(payload: unknown, tenantId: string): Rest
         // remapped here.
         const tenantScopedRow =
           table === TENANT_TABLE || !types.has("tenant_id")
-            ? (sanitizedRow as BackupRow)
-            : { ...(sanitizedRow as BackupRow), tenant_id: tenantId };
+            ? (sealedRow as BackupRow)
+            : { ...(sealedRow as BackupRow), tenant_id: tenantId };
         // Version-1 backups can carry the retired monitor/setup link kinds.
         // Import them as inactive enrollment links so their old tokens never
         // regain a usable public endpoint.
@@ -237,7 +304,7 @@ export function validateRestorePayload(payload: unknown, tenantId: string): Rest
     }
   }
 
-  const value: ValidatedRestore = { tables, tenantRows, counts };
+  const value: ValidatedRestore = { tables, tenantRows, counts, warnings };
   return { ok: true, value };
 }
 
