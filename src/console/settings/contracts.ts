@@ -12,6 +12,10 @@ export interface RuntimeSettingsResponse {
   readonly redisModeActual: RedisMode;
 
   readonly tenantConcurrencyLimit: number | null;
+  readonly invokeDisabled: boolean;
+  readonly concurrencyTolerance: number | null;
+  readonly telemetryWindowMinutes: number | null;
+  readonly defaults: { readonly telemetryWindowMinutes: number };
   readonly thinkingNormalizationEnabled: boolean;
   readonly responsesReasoningSummary: ResponsesReasoningSummary;
   readonly telemetryPayloads: TelemetryPayloadMode;
@@ -131,7 +135,7 @@ function runtimeSettingsErrorResponse(error: unknown, set: { status?: number | s
   });
 }
 
-const runtimeUpdateBody = t.Object({
+export const runtimeUpdateBody = t.Object({
   responsesReasoningSummary: t.Optional(literalUnion(RESPONSES_REASONING_SUMMARIES)),
   telemetryPayloads: t.Optional(literalUnion(TELEMETRY_PAYLOAD_MODES)),
   privacyMode: t.Optional(literalUnion(PRIVACY_MODES)),
@@ -142,6 +146,9 @@ const runtimeUpdateBody = t.Object({
   rtkPruneLevel: t.Optional(literalUnion(RTK_LEVELS)),
   ponyTailEnabled: t.Optional(t.Boolean()),
   ponyTailLevel: t.Optional(literalUnion(PONYTAIL_LEVELS)),
+  invokeDisabled: t.Optional(t.Boolean()),
+  concurrencyTolerance: t.Optional(t.Union([t.Null(), t.Number({ minimum: 0, maximum: 1024 })])),
+  telemetryWindowMinutes: t.Optional(t.Union([t.Null(), t.Number({ minimum: 1, maximum: 1440 })])),
 });
 
 export function createRuntimeSettingsRoutes(config: RuntimeSettingsConfig): Elysia {

@@ -435,6 +435,9 @@ export class ProxyRequestPreparer {
         ? initialRequest
         : withThinkingSuffixIntent({ ...initialRequest, model: bareModel }, thinkingIntent);
     const snapshot = await this.deps.snapshotService.getSnapshot();
+    if (snapshot.invokeDisabledTenants?.has(authorization.tenantId)) {
+      throw new GatewayError("service_unavailable", 503, "invoke is disabled for this tenant");
+    }
     // Scope opts the key into the mapping table; the User-Agent decides whether
     // *this* request may consume it. Without the UA gate, a Claude→DeepSeek
     // remap would also rewrite a non-Claude caller that named `opus`.

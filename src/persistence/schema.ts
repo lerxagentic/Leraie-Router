@@ -817,6 +817,12 @@ export const adminAuditLog = pgTable(
 // master toggle remains a typed column because it is read on the proxy path.
 export interface ConsoleSettingsPreferences {
   tenantConcurrencyLimit?: number | null;
+  /** Refuse all invoke traffic for this tenant while keeping Console reachable. */
+  invokeDisabled?: boolean;
+  /** Slack above configured concurrency limits; null uses no slack. */
+  concurrencyTolerance?: number | null;
+  /** Captured payload detail lifetime in minutes; null uses deployment default. */
+  telemetryWindowMinutes?: number | null;
   /** Normalizes provider-native thinking config for non-user final turns. */
   thinkingNormalizationEnabled?: boolean;
   responsesReasoningSummary?: "auto" | "concise" | "detailed";

@@ -193,6 +193,8 @@ export interface RouteSnapshot {
   readonly providerRouting?: ProviderRoutingMap;
   /** Optional per-tenant pool selection strategy (absent = `least_loaded`). */
   readonly poolRouting?: Readonly<Record<string, PoolRoutingSetting>>;
+  /** Tenants whose invoke kill switch is active. */
+  readonly invokeDisabledTenants?: ReadonlySet<string>;
 }
 
 export type EligibilityReason =

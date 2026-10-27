@@ -14,6 +14,7 @@ import {
   tenantDisabledModels,
   cliToolMappings,
   cliToolSettings,
+  consoleSettings,
 } from "../../persistence/schema";
 import "../../providers/integrations/claude/claude-oauth";
 import "../../providers/integrations/codex/codex-oauth";
@@ -316,7 +317,7 @@ class RouteCatalogRepository {
   constructor(private readonly db: CartethyiaDatabase) {}
 
   async loadRouteCatalogSnapshot(tenantId?: string): Promise<RouteCatalogSnapshotResult> {
-    const [providerRows, modelRows, accountRows, aliasRows, comboRows, routingRows, poolRows, disabledModelRows, cliMappingRows, cliMappingSettingRows, poolSettingRows] =
+    const [providerRows, modelRows, accountRows, aliasRows, comboRows, routingRows, poolRows, disabledModelRows, cliMappingRows, cliMappingSettingRows, poolSettingRows, settingsRows] =
       await Promise.all([
         this.db.select(PROVIDER_COLUMNS).from(providers).where(eq(providers.enabled, true)),
         this.db.select(MODEL_COLUMNS).from(models),
@@ -333,7 +334,11 @@ class RouteCatalogRepository {
         this.db.select(CLI_MAPPING_COLUMNS).from(cliToolMappings),
         this.db.select(CLI_MAPPING_SETTING_COLUMNS).from(cliToolSettings),
         this.db.select(POOL_SETTING_COLUMNS).from(poolRoutingSettings),
+        this.db.select({ tenantId: consoleSettings.tenantId, preferences: consoleSettings.preferences }).from(consoleSettings),
       ]);
+    const invokeDisabledTenants = new Set(
+      settingsRows.filter((row) => row.preferences?.invokeDisabled === true).map((row) => row.tenantId),
+    );
     const mergedModelRows = mergeModelCatalog(modelRows);
 
     // Compile tenant-scoped disables into a lookup keyed by the same
@@ -729,6 +734,7 @@ class RouteCatalogRepository {
       combos,
       ...(routingMap ? { providerRouting: routingMap } : {}),
       ...(Object.keys(poolRouting).length > 0 ? { poolRouting } : {}),
+      ...(invokeDisabledTenants.size > 0 ? { invokeDisabledTenants } : {}),
     };
   }
 }

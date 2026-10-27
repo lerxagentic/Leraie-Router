@@ -49,12 +49,24 @@ function normalizeTelemetryPayloadMode(value: unknown): TelemetryPayloadMode {
   return "metadata";
 }
 
+function normalizeNumber(value: unknown, min: number, max: number, allowZero = false): number | null {
+  if (value === null || value === undefined || typeof value !== "number" || !Number.isFinite(value)) return null;
+  if (value < 0 || (!allowZero && value === 0)) return null;
+  return Math.min(max, Math.max(min, Math.floor(value)));
+}
+
 function mapRuntimeSettingsRow(row: typeof consoleSettings.$inferSelect | undefined): RuntimeSettingsResponse {
   const updatedAt = row?.updatedAt.toISOString() ?? new Date(0).toISOString();
   const prefs = row?.preferences ?? {};
   return {
     redisModeActual: resolveRedisMode(),
     tenantConcurrencyLimit: prefs.tenantConcurrencyLimit ?? null,
+    invokeDisabled: prefs.invokeDisabled === true,
+    concurrencyTolerance: normalizeNumber(prefs.concurrencyTolerance, 0, 1024, true),
+    telemetryWindowMinutes: normalizeNumber(prefs.telemetryWindowMinutes, 1, 1440),
+    defaults: {
+      telemetryWindowMinutes: Math.round(Number(process.env.CARTETHYIA_TELEMETRY_PAYLOAD_RETENTION_MS ?? 15 * 60_000) / 60_000),
+    },
     thinkingNormalizationEnabled: prefs.thinkingNormalizationEnabled === true,
     responsesReasoningSummary: isResponsesReasoningSummary(prefs.responsesReasoningSummary)
       ? prefs.responsesReasoningSummary
@@ -106,6 +118,11 @@ export class DrizzleRuntimeSettingsStore implements RuntimeSettingsStore {
     if (patch.rtkPruneLevel !== undefined) patchPrefs.rtkPruneLevel = patch.rtkPruneLevel;
     if (patch.ponyTailEnabled !== undefined) patchPrefs.ponyTailEnabled = patch.ponyTailEnabled;
     if (patch.ponyTailLevel !== undefined) patchPrefs.ponyTailLevel = patch.ponyTailLevel;
+    if (patch.invokeDisabled !== undefined) patchPrefs.invokeDisabled = patch.invokeDisabled === true;
+    if (patch.concurrencyTolerance !== undefined)
+      patchPrefs.concurrencyTolerance = normalizeNumber(patch.concurrencyTolerance, 0, 1024, true);
+    if (patch.telemetryWindowMinutes !== undefined)
+      patchPrefs.telemetryWindowMinutes = normalizeNumber(patch.telemetryWindowMinutes, 1, 1440);
 
     const rows = await this.db
       .insert(consoleSettings)
