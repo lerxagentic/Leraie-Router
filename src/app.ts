@@ -84,6 +84,7 @@ export interface GatewayShellDeps {
   readonly checkRedis?: () => Promise<void>;
   readonly readiness?: () => Promise<ReadinessCheckResult>;
   readonly shutdownCoordinator?: ShutdownCoordinatorLike;
+  readonly scheduledTasks?: ScheduledTaskRegistry;
 }
 
 /**
@@ -237,7 +238,7 @@ export function createGatewayApp(deps: GatewayAppDeps) {
   const INFLIGHT_BACKSTOP_INTERVAL_MS = 30_000;
   const INFLIGHT_BACKSTOP_GRACE_MS = 30_000;
   const INFLIGHT_BACKSTOP_HARD_GRACE_MS = 120_000;
-  if (deps.mode === "production") deps.scheduledTasks?.register({
+  deps.scheduledTasks?.register({
     name: "inflight-backstop",
     intervalMs: INFLIGHT_BACKSTOP_INTERVAL_MS,
     run: () => {
