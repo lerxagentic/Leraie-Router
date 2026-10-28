@@ -23,20 +23,15 @@ export type DbMode = "full" | "lite";
  * so requiring it costs an existing deployment nothing.
  */
 export function resolveDbMode(env: NodeJS.ProcessEnv = process.env): DbMode {
-  const raw = env.CARTETHYIA_DB_MODE?.trim();
-  if (!raw) {
-    const setupCommand = env.CARTETHYIA_CONFIG_DIR ? "cartethyia setup" : "bun setup";
-    const configHint = env.CARTETHYIA_CONFIG_DIR
-      ? `the user's Cartethyia config file under ${env.CARTETHYIA_CONFIG_DIR}`
-      : ".env";
-    throw new Error(
-      `CARTETHYIA_DB_MODE is required and must be lite or full — run \`${setupCommand}\`, or set it in ${configHint} (lite is embedded SQLite; full needs DATABASE_URL)`,
-    );
-  }
-  if (raw !== "full" && raw !== "lite") {
-    throw new Error(`CARTETHYIA_DB_MODE must be lite or full (got "${env.CARTETHYIA_DB_MODE}")`);
-  }
-  return raw;
+  const raw = (
+    env.LERX_ROUTER_DB_MODE ||
+    env.CARTETHYIA_DB_MODE ||
+    (env.DATABASE_URL ? "full" : "lite")
+  )
+    ?.trim()
+    .toLowerCase();
+  if (raw === "full" || raw === "lite") return raw;
+  return "full";
 }
 
 /**

@@ -18,7 +18,8 @@ case "$DATA_DIR" in /*) ;; *) DATA_DIR="/app/data" ;; esac
 # reports capture as enabled.
 if [ "$(id -u)" = "0" ]; then
   mkdir -p "$DATA_DIR" 2>/dev/null || true
-  chown -R "$APP_UID:$APP_GID" "$DATA_DIR" 2>/dev/null || true
+  mkdir -p "/tmp/opencode-home" 2>/dev/null || true
+  chown -R "$APP_UID:$APP_GID" "$DATA_DIR" "/tmp/opencode-home" 2>/dev/null || true
   exec setpriv --reuid="$APP_UID" --regid="$APP_GID" --init-groups "$@"
 fi
 

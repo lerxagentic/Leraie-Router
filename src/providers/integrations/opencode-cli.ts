@@ -70,7 +70,7 @@ export async function executeOpencodeCli(
   signal?: AbortSignal,
 ): Promise<string> {
   const cliArgs = ["run", "--model", targetModel, "--format", "default"];
-  const homeDir = process.env.DATA_DIR || "/tmp/opencode-home";
+  const homeDir = "/tmp/opencode-home";
   return new Promise((resolve, reject) => {
     let stdoutText = "";
     let stderrText = "";
