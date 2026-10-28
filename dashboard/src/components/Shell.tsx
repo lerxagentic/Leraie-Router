@@ -148,7 +148,7 @@ const titlesMap: Record<string, { title: string; sub: string }> = {
   },
 };
 
-const CONSOLE_FALLBACK = { title: "Console", sub: "Leraie AI Gateway Administration" };
+const CONSOLE_FALLBACK = { title: "Console", sub: "Lerx Router AI Gateway Administration" };
 
 /**
  * Resolves the topbar title/subtitle for a pathname.
@@ -821,7 +821,7 @@ export function DashboardShell({
             <div className="brand-icon" aria-hidden="true" style={{ overflow: "hidden", padding: 0 }}>
               <img
                 src={logoUrl}
-                alt="Leraie"
+                alt="Lerx Router"
                 onError={(event) => {
                   event.currentTarget.onerror = null;
                   event.currentTarget.src = defaultLogoUrl;
@@ -831,7 +831,7 @@ export function DashboardShell({
             </div>
             <div className="brand-meta">
               <div className="brand-name">
-                <span>Leraie</span>
+                <span>Lerx Router</span>
               </div>
               <div className="brand-version-badge">
                 <span>{DASHBOARD_RELEASE_LABEL}</span>

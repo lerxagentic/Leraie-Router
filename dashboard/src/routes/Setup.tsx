@@ -75,8 +75,8 @@ export default function Setup(): ReactNode {
           <div className="auth-logo" aria-hidden="true">
             L
           </div>
-          <h1 className="auth-title">Leraie Console Setup</h1>
-          <p className="auth-desc">Configure the administrator account for Leraie AI Gateway</p>
+          <h1 className="auth-title">Lerx Router Console Setup</h1>
+          <p className="auth-desc">Configure the administrator account for Lerx Router AI Gateway</p>
         </div>
 
         <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "14px" }}>

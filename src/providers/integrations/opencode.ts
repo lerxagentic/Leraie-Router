@@ -1,12 +1,19 @@
 import { completeRequiredSchema } from "../../protocol/primitives";
-import type { ModelDefinition } from "../provider-registry";
+import type { ModelDefinition, ProviderDispatchContext, ProviderDispatchTarget } from "../provider-registry";
 import type { CanonicalRequest, ToolDefinition } from "../../transport/canonical-model";
 import { isRecord } from "../../protocol/primitives";
-import { PROVIDER_COMPATIBILITY_PROFILES } from "../provider-metadata";
+import { PROVIDER_COMPATIBILITY_PROFILES, providerBaseUrl } from "../provider-metadata";
 import { defineModel } from "../model-definition";
 import type { ApiKeyProviderSpec } from "./configured-provider";
 import { buildOpenCodeHeaders } from "./opencode-fingerprint";
 import { OPENCODE_TOOL_DEFINITIONS } from "./opencode-tool-definitions";
+import { OpenAICompatibleAdapter, withBearerAuthentication } from "../compatible-adapter";
+import {
+  findOpencodeBinary,
+  formatOpencodeCliPrompt,
+  executeOpencodeCli,
+  wrapTextAsSseResponse,
+} from "./opencode-cli";
 /**
  * OpenCode's three API-key tiers, all served from `opencode.ai`:
  *
@@ -195,6 +202,86 @@ export const OPENCODE_FREE_SPEC: ApiKeyProviderSpec = opencodeSpec("opencodeft")
 export const OPENCODE_ZEN_SPEC: ApiKeyProviderSpec = opencodeSpec("opencodezen");
 /** OpenCode Go — billed API-key route on the separate `/zen/go/v1` base. */
 export const OPENCODE_GO_SPEC: ApiKeyProviderSpec = opencodeSpec("opencodego");
+
+export class OpenCodeFreeAdapter extends OpenAICompatibleAdapter {
+  constructor() {
+    super(
+      withBearerAuthentication({
+        provider_id: "opencodeft",
+        base_url: providerBaseUrl("opencodeft"),
+        endpoint_paths_by_wire_family: {
+          chat: "/zen/v1/chat/completions",
+          responses: "/zen/v1/responses",
+        },
+        extra_headers: { accept: "application/json" },
+        buildExtraHeaders: opencodeDesktopHeaders,
+        credential_forwarding: "never",
+        supports_prompt_caching: false,
+        prepareRequest: ensureFreeAgentRequest,
+        prePayload: (payload, request, candidate) => {
+          completeOpenCodeToolSchemas(payload);
+          if (candidate.wire_family === "responses") {
+            payload.store = false;
+          }
+          if (candidate.wire_family === "chat" && request.stream) {
+            payload.stream_options = {
+              ...(typeof payload.stream_options === "object" && payload.stream_options !== null
+                ? (payload.stream_options as Record<string, unknown>)
+                : {}),
+              include_usage: true,
+            };
+          }
+        },
+      }),
+    );
+  }
+
+  protected override async executeTransport(
+    headers: Record<string, string>,
+    payload: unknown,
+    context: ProviderDispatchContext,
+    request?: CanonicalRequest,
+    candidate?: ProviderDispatchTarget,
+  ): Promise<Response> {
+    const opencodeBin = findOpencodeBinary();
+    const rawModel = candidate?.model_id ?? "mimo-v2.6-flash-free";
+    const targetModel = `opencode/${rawModel.replace(/-free$/, "")}`;
+
+    // If official CLI binary is installed, try CLI first for chat models to avoid 429 FreeUsageLimitError
+    if (opencodeBin && candidate?.wire_family === "chat") {
+      try {
+        const prompt = formatOpencodeCliPrompt(request, payload);
+        const text = await executeOpencodeCli(opencodeBin, targetModel, prompt, context.abort_signal);
+        return wrapTextAsSseResponse(text, rawModel);
+      } catch {
+        // Fall back to HTTP wire
+      }
+    }
+
+    const res = await super.executeTransport(headers, payload, context, request, candidate);
+
+    // If HTTP returned 429 FreeUsageLimitError or 403 FreeTierError, and CLI is available, fall back to CLI
+    if ((res.status === 429 || res.status === 403) && opencodeBin && candidate?.wire_family === "chat") {
+      try {
+        const clone = res.clone();
+        const bodyText = await clone.text().catch(() => "");
+        if (
+          bodyText.includes("FreeUsageLimitError") ||
+          bodyText.includes("FreeTierError") ||
+          bodyText.includes("free usage")
+        ) {
+          const prompt = formatOpencodeCliPrompt(request, payload);
+          const text = await executeOpencodeCli(opencodeBin, targetModel, prompt, context.abort_signal);
+          return wrapTextAsSseResponse(text, rawModel);
+        }
+      } catch {
+        // Return original HTTP response on fallback failure
+      }
+    }
+
+    return res;
+  }
+}
 
 /**
  * The free-tier subset of `/zen/v1/models`, as this provider's own discovery.

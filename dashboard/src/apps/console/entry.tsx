@@ -7,7 +7,7 @@ import "../../styles/console.css";
 
 /** Mounts the authenticated console app into the shared dashboard document. */
 export function mountConsole(root: HTMLElement): void {
-  document.title = "Leraie Console";
+  document.title = "Lerx Router Console";
   createRoot(root).render(
     <StrictMode>
       <App />

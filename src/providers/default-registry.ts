@@ -325,7 +325,7 @@ export const PROVIDER_CAPABILITIES = {
       chat: "/zen/v1/chat/completions",
       responses: "/zen/v1/responses",
     },
-    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/opencode")).OPENCODE_FREE_SPEC),
+    loadAdapter: async () => new (await import("./integrations/opencode")).OpenCodeFreeAdapter(),
     loadModels: async () => (await import("./integrations/opencode")).OPENCODE_FREE_MODELS,
     // Free-tier filtered, unlike the generic OpenAI discovery: this provider
     // serves the free tier only, and the shared Zen listing publishes the whole

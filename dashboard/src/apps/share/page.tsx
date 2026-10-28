@@ -223,7 +223,7 @@ export function SharePage(): ReactElement {
   // default because the exact id is what a client has to send.
   const [modelView, setModelView] = useState<"raw" | "grouped">("raw");
   useEffect(() => {
-    document.title = "Cartethyia — Shared access";
+    document.title = "Lerx Router — Shared access";
     // The public share surface owns no theme of its own: it applies the console
     // `console-theme` preference through the same helper the console uses, so
     // both apps on this origin always resolve to the same tokens. The bootstrap
@@ -295,7 +295,7 @@ export function SharePage(): ReactElement {
         setStorageWarning("Your key was issued, but this browser could not save it. Copy it now: refreshing will not restore it.");
       }
     } catch {
-      setIssueError("Unable to reach the Cartethyia gateway. Please try again.");
+      setIssueError("Unable to reach the Lerx Router gateway. Please try again.");
     } finally { setIssueBusy(false); }
   };
   const visibleSecret = restoredSecret ?? secret;
@@ -397,7 +397,7 @@ export function SharePage(): ReactElement {
                 height={34}
               />
             </span>
-            <b>Cartethyia</b>
+            <b>Lerx Router</b>
           </a>
           <div className="share-topbar-actions">
             <GithubBadge className="share-github-badge" />
@@ -513,8 +513,8 @@ export function SharePage(): ReactElement {
                           size="sm"
                           onClick={() =>
                             downloadTextFile(
-                              "cartethyia-api-key.txt",
-                              `Cartethyia API key\n\n${handoffKey}\n\nKeep this secret.\n`,
+                              "lerx-router-api-key.txt",
+                              `Lerx Router API key\n\n${handoffKey}\n\nKeep this secret.\n`,
                               "text/plain;charset=utf-8",
                             )
                           }
@@ -550,8 +550,8 @@ export function SharePage(): ReactElement {
                         size="sm"
                         onClick={() =>
                           downloadTextFile(
-                            "cartethyia-api-key.txt",
-                            `Cartethyia API key\n\n${visibleSecret.key}\n\nKeep this secret.\n`,
+                            "lerx-router-api-key.txt",
+                            `Lerx Router API key\n\n${visibleSecret.key}\n\nKeep this secret.\n`,
                             "text/plain;charset=utf-8",
                           )
                         }

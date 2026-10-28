@@ -450,7 +450,7 @@ function CliToolDetailBody({
           title="Model routing"
           subtitle={
             tool.mappingSupported
-              ? "Left is the model name the CLI asks for. Right is the route Leraie sends it to. Leave a target empty to send that slot straight to the provider."
+              ? "Left is the model name the CLI asks for. Right is the route Lerx Router sends it to. Leave a target empty to send that slot straight to the provider."
               : "The model names written into this tool's config."
           }
           action={
@@ -547,7 +547,7 @@ function CliToolDetailBody({
             >
               <span style={{ flex: 1 }}>CLI asks for</span>
               <span style={{ width: "18px", textAlign: "center" }}>→</span>
-              <span style={{ flex: 1 }}>Leraie routes to</span>
+              <span style={{ flex: 1 }}>Lerx Router routes to</span>
             </div>
           ) : null}
 

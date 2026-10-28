@@ -92,7 +92,7 @@ export default function Login(): ReactNode {
             <div className="auth-logo" aria-hidden="true">
               L
             </div>
-            <h1 className="auth-title">Leraie Console</h1>
+            <h1 className="auth-title">Lerx Router Console</h1>
             <p className="auth-desc">Checking console setup...</p>
           </div>
         </div>
@@ -107,7 +107,7 @@ export default function Login(): ReactNode {
           <div className="auth-logo" aria-hidden="true">
             L
           </div>
-          <h1 className="auth-title">Leraie Console</h1>
+          <h1 className="auth-title">Lerx Router Console</h1>
           <p className="auth-desc">Sign in to manage AI Gateway routing and providers</p>
         </div>
 

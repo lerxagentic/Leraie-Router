@@ -27,8 +27,8 @@ export function ApiKeySecretDialog({
   const download = () => {
     if (secret === null) return;
     downloadTextFile(
-      "cartethyia-api-key.txt",
-      `Leraie API key\n\n${secret}\n\nKeep this secret. It is shown only once.\n`,
+      "lerx-router-api-key.txt",
+      `Lerx Router API key\n\n${secret}\n\nKeep this secret. It is shown only once.\n`,
       "text/plain;charset=utf-8",
     );
     toast.success("Key saved to your downloads.");

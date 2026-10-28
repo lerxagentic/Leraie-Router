@@ -367,7 +367,7 @@ export function BackupPanel(): ReactNode {
 
           {format !== null ? (
             <p style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
-              Detected format: {format === "nine_router" ? "router export" : "Leraie backup"}
+              Detected format: {format === "nine_router" ? "router export" : "Lerx Router backup"}
             </p>
           ) : null}
 

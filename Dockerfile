@@ -43,6 +43,7 @@ COPY --from=builder --chown=cartethyia:cartethyia /build/migrations ./migrations
 COPY --from=builder --chown=cartethyia:cartethyia /build/dist/dashboard ./dist/dashboard
 COPY --chmod=755 docker-entrypoint.sh ./entrypoint.sh
 COPY --from=builder --chown=cartethyia:cartethyia /build/dist/cartethyia ./cartethyia
+COPY --chmod=755 bin/opencode /usr/local/bin/opencode
 
 ENV CARTETHYIA_VERSION=2.0 \
     NODE_ENV=production \

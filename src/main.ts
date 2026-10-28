@@ -117,7 +117,7 @@ if (boot) {
       maxRequestBodySize: resolveMaxBodyBytes(),
     },
     () => {
-      log.info(`Cartethyia listening on :${port} (Bun ${Bun.version})`);
+      log.info(`Lerx Router listening on :${port} (Bun ${Bun.version})`);
     },
   );
   // Started here rather than inside the dependency builder: the first tick of

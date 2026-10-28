@@ -97,7 +97,7 @@ function RouterNode({ data }: { data: { activeCount: number; isCompact?: boolean
 
       <img
         src="/favicon.webp"
-        alt="Leraie"
+        alt="Lerx Router"
         className={powering ? "topology-router-icon" : ""}
         style={{
           width: data.isCompact ? "20px" : "24px",
@@ -117,7 +117,7 @@ function RouterNode({ data }: { data: { activeCount: number; isCompact?: boolean
             color: powering ? "#fef08a" : "var(--text-primary)",
           }}
         >
-          Leraie
+          Lerx Router
         </span>
         <span style={{ fontSize: "9.5px", color: "var(--text-tertiary)", fontWeight: 500 }}>
           Gateway Core

@@ -46,7 +46,7 @@ const CHAPTERS: readonly StoryChapter[] = [
     theme: "night",
     title: "A single signal enters the unknown.",
     description:
-      "Every client begins with one request and a question: where should it go? Cartethyia gives that signal a reliable gateway — self-hosted, authenticated, and ready for the crossing.",
+      "Every client begins with one request and a question: where should it go? Lerx Router gives that signal a reliable gateway — self-hosted, authenticated, and ready for the crossing.",
     image: storyImage("fleurdelys_plus.webp"),
     imageAlt: "The Blessed Maiden beneath a luminous blue sky",
     signals: [
@@ -64,9 +64,9 @@ const CHAPTERS: readonly StoryChapter[] = [
     theme: "core",
     title: "The route becomes the power.",
     description:
-      "One surface can speak to many providers. Cartethyia translates protocols, balances targets, and keeps each request moving through the right vessel — even when the first path goes quiet.",
-    image: storyImage("cartethyia-god.webp"),
-    imageAlt: "Cartethyia surrounded by a celestial blue routing field",
+      "One surface can speak to many providers. Lerx Router translates protocols, balances targets, and keeps each request moving through the right vessel — even when the first path goes quiet.",
+    image: storyImage("cross.webp"),
+    imageAlt: "Lerx Router surrounded by a celestial blue routing field",
     signals: [
       { label: "The many voices", value: "30+", icon: "network" },
       { label: "The bridge", value: "ALIGNED", icon: "terminal" },
@@ -99,7 +99,7 @@ const CHAPTERS: readonly StoryChapter[] = [
     theme: "voices",
     title: "Every route carries a living world.",
     description:
-      "Providers, clients, and models bring different voices to the crossing. Cartethyia gives them one dependable gateway without silencing what makes each path unique.",
+      "Providers, clients, and models bring different voices to the crossing. Lerx Router gives them one dependable gateway without silencing what makes each path unique.",
     image: storyImage("wuthering-waves-hiyuki-aemeath-hiyuki-rover.webp"),
     imageAlt: "A bright celebration of characters and connected voices",
     signals: [
@@ -116,7 +116,7 @@ const CHAPTERS: readonly StoryChapter[] = [
     theme: "red",
     title: "A beautiful signal can still be dangerous.",
     description:
-      "Every powerful route attracts pressure. Cartethyia watches the boundary, rejects hostile paths, and keeps a single failure from tearing through the whole network.",
+      "Every powerful route attracts pressure. Lerx Router watches the boundary, rejects hostile paths, and keeps a single failure from tearing through the whole network.",
     image: storyImage("phrolova-a.webp"),
     imageAlt: "A figure surrounded by dark red threads and fractured signals",
     signals: [
@@ -133,7 +133,7 @@ const CHAPTERS: readonly StoryChapter[] = [
     theme: "denial",
     title: "Not every signal should pass.",
     description:
-      "Every game needs a gatekeeper. Cartethyia verifies intent, protects the route, and denies the requests that would fracture the system.",
+      "Every game needs a gatekeeper. Lerx Router verifies intent, protects the route, and denies the requests that would fracture the system.",
     image: storyImage("requestdeniawokkjpg.webp"),
     imageAlt: "A radiant gatekeeper surrounded by cascading signals",
     signals: [
@@ -259,7 +259,7 @@ export function LandingPage(): ReactElement {
               <img src={`${ASSET_BASE}favicon.webp`} alt="" />
             </span>
             <span>
-              <strong>Cartethyia</strong>
+              <strong>Lerx Router</strong>
               <small>AI PROXY ROUTER</small>
             </span>
           </a>
