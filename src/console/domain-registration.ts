@@ -50,6 +50,7 @@ import { createUpdateRoutes } from "./updates/routes";
 import { createRemoteSupportRoutes } from "./remote-support/routes";
 import { createRemoteSupportService } from "./remote-support/service";
 import { createBackupRoutes } from "./backup/routes";
+import { createPromptInjectionRoutes } from "./prompt-injection/routes";
 import { BackupService } from "./backup/service";
 import type { ConsoleCredentialService } from "./auth/service";
 import { healthEvents } from "../persistence/schema";
@@ -381,4 +382,5 @@ export function registerConsoleDomains(
     callbackListener: oauthCallbackListener,
   };
   console.use(createOAuthLoginRoutes(oauthConfig));
+  console.use(createPromptInjectionRoutes({ db: ctx.db, accessResolver: ctx.accessResolver }));
 }

@@ -17,6 +17,7 @@ import {
   Settings as SettingsIcon,
   ShieldAlert,
   ScrollText,
+  Sparkles,
   Sun,
   Swords,
   Terminal,
@@ -72,6 +73,7 @@ export const navigationGroups: readonly NavGroupDef[] = [
     label: "Features +",
     items: [
       { label: "Model Lab", path: "/model-lab", icon: FlaskConical },
+      { label: "Prompt Injection", path: "/prompt-injection", icon: Sparkles },
       { label: "Image Lab", path: "/image-lab", icon: ImageIcon },
       { label: "Compare Models", path: "/arena", icon: Swords },
       { label: "PRD Builder", path: "/prd-builder", icon: FileText },
@@ -133,6 +135,10 @@ const titlesMap: Record<string, { title: string; sub: string }> = {
   "/personas": {
     title: "Custom Personas",
     sub: "Router-wide system prompts that replace the caller's own",
+  },
+  "/prompt-injection": {
+    title: "Prompt Injection",
+    sub: "Global, per-API-key, and custom Model Variant instructions",
   },
   "/benchmark": {
     title: "Model Benchmark",

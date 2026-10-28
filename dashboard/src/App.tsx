@@ -56,6 +56,7 @@ const ImageLab = lazyWithRetry(() => import("./routes/ImageLab"), "image-lab");
 const Arena = lazyWithRetry(() => import("./routes/Arena"), "arena");
 const PrdBuilder = lazyWithRetry(() => import("./routes/PrdBuilder"), "prd-builder");
 const Personas = lazyWithRetry(() => import("./routes/Personas"), "personas");
+const PromptInjection = lazyWithRetry(() => import("./routes/PromptInjection"), "prompt-injection");
 const Benchmark = lazyWithRetry(() => import("./routes/Benchmark"), "benchmark");
 
 /**
@@ -193,6 +194,7 @@ function ProtectedRoutes(): ReactNode {
           <Route path="/arena" element={<Arena />} />
           <Route path="/prd-builder" element={<PrdBuilder />} />
           <Route path="/personas" element={<Personas />} />
+          <Route path="/prompt-injection" element={<PromptInjection />} />
           <Route path="/benchmark" element={<Benchmark />} />
           <Route path="/cli-tools" element={<CliTools />} />
           <Route path="/cli-tools/:toolId" element={<CliToolDetail />} />

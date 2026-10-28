@@ -21,14 +21,14 @@ export interface InjectedChatTurn {
 }
 
 export interface PromptInjectionConfig {
-  readonly id?: string;
-  readonly name?: string;
-  readonly mode?: "single" | "chat";
-  readonly text?: string;
-  readonly content?: string; // synonym for text
-  readonly position?: "prepend" | "append";
-  readonly turns?: readonly InjectedChatTurn[];
-  readonly enabled?: boolean;
+  readonly id?: string | undefined;
+  readonly name?: string | undefined;
+  readonly mode?: "single" | "chat" | undefined;
+  readonly text?: string | undefined;
+  readonly content?: string | undefined; // synonym for text
+  readonly position?: "prepend" | "append" | undefined;
+  readonly turns?: readonly InjectedChatTurn[] | undefined;
+  readonly enabled?: boolean | undefined;
 }
 
 export interface PromptInjectionStoreData {
