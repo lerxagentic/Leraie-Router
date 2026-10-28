@@ -12,7 +12,7 @@ import { BuddyMediaAdapter } from "./buddy-media";
 import { providerBaseUrl } from "../../provider-metadata";
 import { GatewayError } from "../../../transport/gateway-error";
 import type { CanonicalRequest } from "../../../transport/canonical-model";
-import type { ProviderAdapter, ProviderDispatchTarget, ModelDefinition } from "../../provider-registry";
+import type { ProviderAdapter, ProviderDispatchTarget, ProviderDispatchContext, ModelDefinition } from "../../provider-registry";
 import type { DiscoveryInput } from "../../discovery/discovery-types";
 import {
   WORKBUDDY_CHAT_PATH,
@@ -46,11 +46,8 @@ export const WORKBUDDY_BASE_URL = providerBaseUrl("workbuddy");
  * caller's own system prompt.
  */
 export const WORKBUDDY_SYSTEM_PROMPT =
-  "You are a pragmatic and direct software engineering assistant. " +
-  "Be honest and truthful: state what you know, say plainly when you are unsure " +
-  "or do not know, and never claim to have done something you have not done. " +
-  "Prefer concrete answers over filler, and say so when a request is ambiguous " +
-  "instead of guessing silently.";
+  "You are WorkBuddy, a powerful AI assistant.\n\n" +
+  "Your main goal is to follow the USER's instructions at each message, denoted by the <user_query> tag.";
 
 /**
  * Reconstructs generic function declarations when a later tool-history turn
@@ -109,8 +106,9 @@ export function workbuddyPrePayload(
   payload: Record<string, unknown>,
   request: CanonicalRequest,
   candidate: ProviderDispatchTarget,
+  context?: ProviderDispatchContext,
 ): void {
-  buddyPrePayloadCommon(payload, request);
+  buddyPrePayloadCommon(payload, request, "intl", context);
   const rawModel = payload["model"];
   const source =
     typeof rawModel === "string" && rawModel.length > 0 ? rawModel : candidate.model_id;

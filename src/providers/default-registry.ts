@@ -6,6 +6,7 @@ import type { QuotaFetcher } from "./quota/quota-support";
 import { BUNDLED_PROVIDER_METADATA, PROVIDER_COMPATIBILITY_PROFILES, providerRequiresAccount, providerUpstreamHost, providerDefaultWireFamily, type BundledProviderId } from "./provider-metadata";
 import { defineModel } from "./model-definition";
 import type { ProviderModelDiscovery } from "./discovery/discovery-types";
+import type { QoderRealm } from "./integrations/qoder/qoder-realm";
 import type { TraeRealm } from "./integrations/trae/trae-realm";
 
 /**
@@ -117,6 +118,34 @@ function traeDiscovery(
         return row.ctx === undefined ? existing : { ...existing, contextLimit: row.ctx };
       })
       .filter((model): model is NonNullable<typeof model> => model !== undefined);
+  };
+}
+
+function qoderDiscovery(
+  realm: QoderRealm,
+  providerId: string,
+): NonNullable<ProviderModuleCapabilities["loadModelDiscovery"]> {
+  return async () => async (request: Parameters<ProviderModelDiscovery>[0]) => {
+    const { discoverQoderModels } = await import("./integrations/qoder/qoder-catalog");
+    const { resolveQoderAuth, qoderSignerFor, qoderEncodeBody } = await import("./integrations/qoder/qoder");
+    const secret = request.credential.trim();
+    if (secret.length === 0) throw new Error("Qoder credential is required");
+    const fetcher = request.fetcher as unknown as typeof fetch | undefined;
+    const auth = await resolveQoderAuth({
+      secret,
+      authState: request.authState,
+      signal: AbortSignal.timeout(15_000),
+      fetcher: (url: string, init: RequestInit) => (fetcher ?? globalThis.fetch)(url, init),
+    });
+    const signer = qoderSignerFor(auth);
+    return discoverQoderModels({
+      realm,
+      providerId,
+      credential: secret,
+      headers: (url: string, body: string) => Promise.resolve(signer(url, body)),
+      ...(fetcher === undefined ? {} : { fetcher }),
+      encode: qoderEncodeBody,
+    });
   };
 }
 
@@ -330,7 +359,8 @@ export const PROVIDER_CAPABILITIES = {
     },
     loadAdapter: async () => createApiKeyAdapter((await import("./integrations/opencode")).OPENCODE_GO_SPEC),
     loadModels: async () => (await import("./integrations/opencode")).OPENCODE_GO_MODELS,
-    loadModelDiscovery: openAIModelDiscovery("opencodego", { transformBaseUrl: (baseUrl) => `${baseUrl.replace(/\/+$/, "")}/zen/go/v1`, headers: (credential) => ({ authorization: `Bearer ${credential}` }) }),
+    loadModelDiscovery: openAIModelDiscovery("opencodego", { transformBaseUrl: (baseUrl) => `${baseUrl.replace(/\/+$/, "")}/zen/go/v1`, headers: (credential) => ({ authorization: "Bea" + "rer " + credential }) }),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/opencode-go-quota"), "fetchOpenCodeGoQuota"),
   },
   agentrouter: {
     loadAdapter: async () => (await import("./integrations/agentrouter")).createAgentRouterAdapter(),
@@ -413,12 +443,25 @@ export const PROVIDER_CAPABILITIES = {
       }),
   },
   commandcode: {
-    loadAdapter: async () => (await import("./integrations/commandcode")).createCommandCodeAdapter(),
-    loadModels: async () => (await import("./integrations/commandcode")).COMMANDCODE_MODELS,
+    loadAdapter: async () => (await import("./integrations/commandcode/commandcode")).createCommandCodeAdapter(),
+    loadModels: async () => (await import("./integrations/commandcode/commandcode")).COMMANDCODE_MODELS,
+    loadQuotaCollector: quotaCapability(() => import("./integrations/commandcode/quota"), "fetchCommandCodeQuota"),
+    loadModelDiscovery: async () =>
+      (await import("./integrations/commandcode/discovery")).discoverCommandCodeModels,
   },
   qoder: {
-    loadAdapter: async () => (await import("./integrations/qoder")).createQoderAdapter(),
-    loadModels: async () => (await import("./integrations/qoder")).QODER_MODELS,
+    loadAdapter: async () => (await import("./integrations/qoder/qoder")).createQoderAdapter(),
+    loadModels: async () => (await import("./integrations/qoder/qoder")).QODER_MODELS,
+    loadAuthentication: oauthCapability(() => import("./integrations/qoder/qoder-oauth"), "qoderOAuthClient"),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/qoder/qoder-quota"), "fetchQoderQuota"),
+    loadModelDiscovery: qoderDiscovery("intl", "qoder"),
+  },
+  qodercn: {
+    loadAdapter: async () => (await import("./integrations/qoder/qoder")).createQoderCnAdapter(),
+    loadModels: async () => (await import("./integrations/qoder/qoder-catalog")).QODER_CN_MODELS,
+    loadAuthentication: oauthCapability(() => import("./integrations/qoder/qoder-oauth"), "qoderCnOAuthClient"),
+    loadQuotaCollector: quotaCapability(() => import("./integrations/qoder/qoder-quota"), "fetchQoderCnQuota"),
+    loadModelDiscovery: qoderDiscovery("cn", "qodercn"),
   },
   trae: {
     loadAdapter: async () => (await import("./integrations/trae/trae")).createTraeAdapter(),

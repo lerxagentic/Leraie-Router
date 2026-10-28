@@ -54,9 +54,6 @@ const GROK_QUOTA_COOLDOWN_MS = 24 * 60 * 60 * 1000;
  * follow a transient upstream rule change, while a content-policy block
  * follows a request the account itself made.
  */
-const CHANNEL_BLOCK_COOLDOWN_MS = 6 * 60 * 60 * 1000;
-/** Providers whose `11140` policy block parks the account for a long cooldown. */
-
 // ===== health/account-recorder.ts =====
 export interface AccountHealthEventRecord {
   readonly id: string;
@@ -319,19 +316,19 @@ export function classifyAccountError(
   // request — and since every account failed the same way, the whole pool
   // looked dead with nothing ever parked.
   const channelRejection =
-    providerCode === "11128" || lower.includes("unapproved channel");
+    providerCode === "11128" || providerCode === "11-128" || lower.includes("unapproved channel") || lower.includes("conversation id missing");
   const channelBlock =
     channelRejection &&
     options?.providerId !== undefined &&
     BUDDY_PROVIDER_IDS.has(options.providerId.toLowerCase());
   if (channelBlock) {
     return result(
-      "policy_blocked",
+      "policy_blocked_invalid_request",
       "cooldown",
-      CHANNEL_BLOCK_COOLDOWN_MS,
-      new Date(Date.now() + CHANNEL_BLOCK_COOLDOWN_MS),
+      0,
+      null,
       reason("Provider channel rejection"),
-      origin === "upstream",
+      false,
     );
   }
   // A hosted-tool failure is a per-request outcome of the provider's own

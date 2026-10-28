@@ -124,3 +124,30 @@ function geminiLevelOutputFloor(level: string): number {
   }
 }
 
+const CLAMPED_EFFORT_MIN_OUTPUT_TOKENS = 16_384;
+
+const BUDDY_LEVEL_RANK: Readonly<Record<string, number>> = {
+  off: 0,
+  none: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5,
+  max: 6,
+};
+
+export function clampedEffortOutputFloor(
+  requested: string | undefined,
+  applied: string | undefined,
+  modelOutputLimit: number | undefined,
+): number | undefined {
+  if (requested === undefined || applied === undefined) return undefined;
+  const from = BUDDY_LEVEL_RANK[requested.trim().toLowerCase()];
+  const to = BUDDY_LEVEL_RANK[applied.trim().toLowerCase()];
+  if (from === undefined || to === undefined || from === to) return undefined;
+  if (modelOutputLimit === undefined || !Number.isFinite(modelOutputLimit) || modelOutputLimit <= 0)
+    return undefined;
+  return Math.max(CLAMPED_EFFORT_MIN_OUTPUT_TOKENS, Math.floor(modelOutputLimit / 2));
+}
+

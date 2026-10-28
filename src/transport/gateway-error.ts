@@ -20,6 +20,7 @@ export type GatewayErrorCode =
   | "admission_unavailable"
   | "slug_reserved"
   | "quota_exceeded"
+  | "upstream_queued"
   | "authentication_failed"
   | "policy_rejected"
   | "invalid_request"

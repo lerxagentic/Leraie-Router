@@ -52,11 +52,10 @@ export const CODEBUDDY_BASE_URL = providerBaseUrl("cb");
  * invented certainty.
  */
 export const CODEBUDDY_SYSTEM_PROMPT =
-  "You are a pragmatic and direct software engineering assistant. " +
-  "Be honest and truthful: state what you know, say plainly when you are unsure " +
-  "or do not know, and never claim to have done something you have not done. " +
-  "Prefer concrete answers over filler, and say so when a request is ambiguous " +
-  "instead of guessing silently.";
+  "You are CodeBuddy Code.\n\n" +
+  "You are an interactive CLI tool that helps users with software engineering tasks. " +
+  "Use the instructions below and the tools available to you to assist the user. " +
+  "Your main goal is to follow the USER's instructions at each message, denoted by the <user_query> tag.";
 
 function codeBuddyIntlPrePayload(
   payload: Record<string, unknown>,

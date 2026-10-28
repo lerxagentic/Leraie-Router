@@ -2,17 +2,29 @@
 // AES/RSA request signing, alphabet-scrambled binary body, enveloped SSE
 // frames — session/crypto protocol outside factory reach; stays bespoke.
 import { constants, createCipheriv, createHash, publicEncrypt, randomUUID } from "node:crypto";
-import { classifyUpstreamError, extractUpstreamMessage, mapUpstreamHttpError, upstreamErrorIdentifier } from "../../transport/failure-policy";
-import { GatewayError } from "../../transport/gateway-error";
-import type { CanonicalEvent, CanonicalRequest, CanonicalStopReason, ContentPart } from "../../transport/canonical-model";
-import { toolResultParts } from "../../transport/canonical-model";
-import { decodeSseEvents } from "../../transport/streaming";
-import { usageFromProvider, readReasoningText } from "../usage";
-import { readCredentialSecret, type ProviderDispatchTarget, type ModelDefinition, type ProviderAdapter, type ProviderDispatchContext } from "../provider-registry";
-import { defineModel } from "../model-definition";
-import { getQoderVersion } from "../operations/client-versions";
-import { abortGatewayError, createUpstreamDeadlineLifecycle } from "../operations/upstream-deadline";
-import { qoderMachineOs } from "../operations/cli-platform";
+import {
+  classifyUpstreamError,
+  extractUpstreamMessage,
+  isUpstreamQueued,
+  mapUpstreamHttpError,
+  queueRetryAfterMs,
+  upstreamErrorIdentifier,
+  type UpstreamErrorClassification,
+} from "../../../transport/failure-policy";
+import { GatewayError } from "../../../transport/gateway-error";
+import type { CanonicalEvent, CanonicalRequest, CanonicalStopReason, ContentPart } from "../../../transport/canonical-model";
+import { toolResultParts } from "../../../transport/canonical-model";
+import { decodeSseEvents } from "../../../transport/streaming";
+import { usageFromProvider, readReasoningText } from "../../usage";
+import { readCredentialSecret, type ProviderDispatchTarget, type ProviderAdapter, type ProviderDispatchContext, type ProviderId } from "../../provider-registry";
+import type { ModelDefinition } from "../../model-definition";
+import { parseQoderOAuthState } from "./qoder-oauth";
+import { getQoderVersion } from "../../operations/client-versions";
+import { abortGatewayError, createUpstreamDeadlineLifecycle } from "../../operations/upstream-deadline";
+import { qoderMachineOs } from "../../operations/cli-platform";
+import { qoderGatewayCandidates, QODER_CHAT_PATH, QODER_REALMS, type QoderRealm } from "./qoder-realm";
+import { QODER_CN_MODEL_CONFIGS, QODER_INTL_MODEL_CONFIGS, QODER_INTL_MODELS } from "./qoder-catalog";
+import { isQoderVirtualModel, qoderDispatchModelId } from "./qoder-virtual";
 
 interface QoderModeProfile {
   readonly chatUrl: string;
@@ -62,7 +74,25 @@ export const QODER_MODEL_CONFIGS: Record<
 
 const QODER_APPCODE = "cosy";
 const QODER_SIG_SECRET = "d2FyLCB3YXIgbmV2ZXIgY2hhbmdlcw==";
+/**
+ * Where a PAT is exchanged for a short-lived job token, per realm.
+ *
+ * The job token is realm-bound: one minted on the global host answers "Login
+ * expired" on the China gateway. Exchanging against the wrong host therefore
+ * looks like a dead credential rather than a routing bug, which is why the
+ * URL is derived from the realm table instead of being one constant.
+ *
+ * `intl` keeps its historical `center.qoder.sh` v3 endpoint. `cn` uses the
+ * openapi host the donor's `PATH_JOB_EXCHANGE` describes; if that path is
+ * ever wrong for CN, the failure surfaces as a 401/403 on exchange, not as a
+ * silently misrouted request.
+ */
 const QODER_JOB_TOKEN_URL = "https://center.qoder.sh/algo/api/v3/user/jobToken?Encode=1";
+function qoderJobTokenUrl(realm: QoderRealm): string {
+  return realm === "cn"
+    ? `${QODER_REALMS.cn.openapi}/api/v1/jobToken/exchange`
+    : QODER_JOB_TOKEN_URL;
+}
 const QODER_STANDARD_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const QODER_ALPHABET = "_doRTgHZBKcGVjlvpC,@aFSx#DPuNJme&i*MzLOEn)sUrthbf%Y^w.(kIQyXqWA!";
 const QODER_RSA_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
@@ -102,6 +132,55 @@ function qoderPathSignature(url: string): string {
 const QODER_MACHINE_ID_TTL_MS = 60 * 60 * 1000;
 const QODER_MAX_MACHINE_IDS = 1_024;
 const qoderMachineIds = new Map<string, { id: string; expiresAt: number }>();
+/**
+ * A PAT (`pt-...`) must be exchanged for a short-lived job token before it
+ * can sign COSY requests. Device tokens (`dt-...`) from OAuth login and job
+ * tokens (`jt-...`) are used directly.
+ */
+export function isQoderPat(secret: string): boolean {
+  return secret.startsWith("pt-");
+}
+
+/**
+ * Stable per-account machine id for OAuth dispatches. Derived from the
+ * account id (not minted per request) so pooled accounts keep one device
+ * fingerprint across restarts instead of looking like a new device every
+ * time, while staying distinct per account.
+ */
+export function qoderMachineIdForAccount(accountId: string): string {
+  const hex = createHash("sha256").update(`qoder-machine-v1:${accountId}`).digest("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
+}
+
+/**
+ * Builds dispatch auth from an OAuth device token. The token is used
+ * directly as the COSY identity's oauth token; the user id and machine id
+ * come from the `auth_state` the login persisted. Fails closed with a
+ * reconnect prompt when the identity is absent (e.g. an account created
+ * before `auth_state` existed) instead of signing with a guessed id.
+ */
+export function qoderOAuthAuth(
+  secret: string,
+  authState: unknown,
+  accountId: string | undefined,
+): QoderAuth {
+  const state = parseQoderOAuthState(authState);
+  if (state === undefined || !state.userId) {
+    throw new GatewayError(
+      "authentication_failed",
+      401,
+      "Qoder OAuth account is missing its user identity; sign in again",
+    );
+  }
+  return {
+    userId: state.userId,
+    userName: "",
+    userType: "personal_standard",
+    securityOauthToken: secret,
+    refreshToken: "",
+    machineId: state.machineId || (accountId ? qoderMachineIdForAccount(accountId) : randomUUID()),
+  };
+}
 
 function qoderMachineIdFromPat(pat: string): string {
   const key = createHash("sha256").update(pat).digest("hex");
@@ -221,10 +300,11 @@ async function exchangeQoderPat(
   signal: AbortSignal,
   fetcher: QoderFetcher,
   version = getQoderVersion(),
+  realm: QoderRealm = "intl",
 ): Promise<QoderAuth> {
   const machineId = qoderMachineIdFromPat(pat);
   const encodedBody = transformQoderBody(JSON.stringify({ payload: JSON.stringify({ personalToken: pat, securityOauthToken: "", refreshToken: "", needRefresh: false, authInfo: {} }), encodeVersion: "1" }));
-  const response = await fetcher(QODER_JOB_TOKEN_URL, { method: "POST", headers: qoderStaticHeaders(machineId, version), body: encodedBody as unknown as BodyInit, signal });
+  const response = await fetcher(qoderJobTokenUrl(realm), { method: "POST", headers: qoderStaticHeaders(machineId, version), body: encodedBody as unknown as BodyInit, signal });
   if (!response.ok) throw await mapUpstreamHttpError(response, "qoder");
   let responseBody: unknown;
   try {
@@ -310,7 +390,17 @@ function qoderEnvelopeToFrames(data: string): Array<{ event: string | null; data
     // the same gateway error policy as the other dispatch paths.
     const detail = qoderEnvelopeMessage(rec);
     const identifier = upstreamErrorIdentifier(rec["body"]) ?? upstreamErrorIdentifier(rec);
-    const classification = classifyUpstreamError(status, identifier);
+    // Qoder signals a queued request the same way inside the stream as it does
+    // on HTTP: `{"code":"10605", "isQueued":true, "retryAfterSeconds":N}` on a
+    // non-200 envelope. The status table would read the 403 as a refusal, and
+    // the caller would end its turn on a request that was only waiting.
+    const queuedWaitMs = isUpstreamQueued(rec["body"]) ?? false;
+    const waitMs = queuedWaitMs
+      ? (queueRetryAfterMs(rec["body"]) ?? undefined)
+      : undefined;
+    const classification: UpstreamErrorClassification = queuedWaitMs
+      ? { code: "upstream_queued", status: 503, origin: "upstream" }
+      : classifyUpstreamError(status, identifier);
     throw new GatewayError(
       classification.code,
       classification.status,
@@ -323,6 +413,8 @@ function qoderEnvelopeToFrames(data: string): Array<{ event: string | null; data
         ...(classification.rateLimitScope
           ? { rateLimitScope: classification.rateLimitScope }
           : {}),
+        ...(waitMs === undefined ? {} : { retryAfterMs: waitMs, cooldownMs: waitMs }),
+        ...(queuedWaitMs ? { reason: "upstream-queued" } : {}),
       },
       classification.origin,
     );
@@ -372,7 +464,12 @@ function qoderStableRecordId(modelId: string, messages: CanonicalRequest["messag
 }
 
 function qoderRequestedMaxTokens(request: CanonicalRequest, modelConfig: QoderModelConfig): number {
-  const configured = typeof modelConfig.max_output_tokens === "number" ? modelConfig.max_output_tokens : 32768;
+  /**
+   * The ceiling is the roster's stated one. A fixed 32k fallback would clamp
+   * every model alike, so a request asking for more would be silently lowered
+   * no matter which model it named.
+   */
+  const configured = typeof modelConfig.max_output_tokens === "number" ? modelConfig.max_output_tokens : 65_536;
   const controls = request.generation_controls as Record<string, unknown>;
   const requested =
     typeof controls["max_tokens"] === "number"
@@ -487,7 +584,10 @@ export function buildQoderRequest(
       is_vl: modelConfig.is_vl,
       is_reasoning: modelConfig.is_reasoning,
       max_input_tokens: modelConfig.max_input_tokens,
-      max_output_tokens: modelConfig.max_output_tokens ?? 32768,
+      // Mirrors the roster's stated ceiling. A fixed 32k fallback would be sent
+      // for every model alike, so the request would declare a cap the catalog
+      // does not publish.
+      max_output_tokens: modelConfig.max_output_tokens ?? 65_536,
       source: modelConfig.source ?? "system",
     },
     messages: qoderMessages,
@@ -596,22 +696,50 @@ async function* qoderBodyToCanonicalEvents(
 
 // Model catalog — maps QODER_MODEL_CONFIGS (provider) to Cartethyia ModelDefinition
 
-export const QODER_MODELS: readonly ModelDefinition[] = Object.entries(QODER_MODEL_CONFIGS).map(([id, cfg]) =>
-  defineModel({ id, endpoint: "/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1", ctx: cfg.max_input_tokens, out: cfg.max_output_tokens ?? 32768, vision: cfg.is_vl, reasoning: cfg.is_reasoning }),
-);
+/**
+ * The intl catalog this provider publishes.
+ *
+ * `QODER_MODEL_CONFIGS` is not the source here: it freezes most rows at 180k
+ * while the upstream reports 1M for the same keys. That number is not
+ * cosmetic: it is sent upstream as `model_config.max_input_tokens`, so a stale
+ * low value tells Qoder the conversation window is small and makes it behave
+ * that way. Both the published catalog and the dispatched request come from the
+ * realm's roster, which carries the upstream's own numbers.
+ */
+export const QODER_MODELS: readonly ModelDefinition[] = QODER_INTL_MODELS;
 
 // ProviderAdapter — manual dispatch preserving COSY encryption + envelope logic
 
 interface QoderAdapterOptions {
   readonly fetch?: typeof fetch;
+  /** Which deployment this adapter dispatches to. Defaults to intl. */
+  readonly realm?: QoderRealm;
+  /** Bundled provider id, so the adapter's own id matches the route's. */
+  readonly providerId?: string;
 }
 
 class QoderAdapter implements ProviderAdapter {
-  readonly provider_id = QODER_PROVIDER_ID;
+  readonly provider_id: ProviderId;
+  private readonly realm: QoderRealm;
   private readonly fetchFn: typeof fetch;
 
   constructor(options: QoderAdapterOptions = {}) {
+    this.provider_id = (options.providerId ?? QODER_PROVIDER_ID) as ProviderId;
+    this.realm = options.realm ?? "intl";
     this.fetchFn = options.fetch ?? globalThis.fetch;
+  }
+
+  /**
+   * The static roster for this adapter's realm.
+   *
+   * A single merged table advertised CN-only keys to global accounts and vice
+   * versa, so a request was routed to a deployment that refuses it.
+   */
+  #modelConfigs(): Record<string, QoderModelConfig> {
+    return (this.realm === "cn" ? QODER_CN_MODEL_CONFIGS : QODER_INTL_MODEL_CONFIGS) as Record<
+      string,
+      QoderModelConfig
+    >;
   }
 
   async *dispatch(
@@ -622,10 +750,28 @@ class QoderAdapter implements ProviderAdapter {
     if (candidate.wire_family !== "chat") {
       throw new GatewayError("capability_unsupported", 400, `qoder supports chat only, got ${candidate.wire_family}`);
     }
-    const pat = readCredentialSecret(context.credential, "Qoder PAT is required");
+    const secret = readCredentialSecret(context.credential, "Qoder credential is required");
 
-    const modelId = candidate.model_id || request.model;
-    const modelConfig = (QODER_MODEL_CONFIGS as Record<string, QoderModelConfig>)[modelId] ?? {
+    /**
+     * A caller-facing virtual name is translated to its roster key here.
+     *
+     * The translation has to happen before the config lookup and before the
+     * request body: the body carries the roster key, and looking up the
+     * virtual id in the config table would fall through to the synthetic
+     * default and silently dispatch under-declared capabilities.
+     */
+    const requestedModelId = candidate.model_id || request.model;
+    if (isQoderVirtualModel(requestedModelId) && !this.#modelConfigs()[qoderDispatchModelId(requestedModelId)]) {
+      throw new GatewayError(
+        "model_not_found",
+        404,
+        `Qoder virtual model ${requestedModelId} resolves to a roster key this realm does not serve`,
+        { virtual_model: requestedModelId, target: qoderDispatchModelId(requestedModelId) },
+        "upstream",
+      );
+    }
+    const modelId = qoderDispatchModelId(requestedModelId);
+    const modelConfig = this.#modelConfigs()[modelId] ?? {
       id: modelId,
       display_name: modelId,
       max_input_tokens: 180_000,
@@ -643,12 +789,20 @@ class QoderAdapter implements ProviderAdapter {
 
     try {
       const version = getQoderVersion();
-      const auth = await exchangeQoderPat(pat, lifecycle.signal, fetcher, version);
+      // Dual mode like Cline: a pasted PAT is exchanged for a job token per
+      // request, while an OAuth device token is used directly with the
+      // identity the login persisted.
+      const auth = isQoderPat(secret)
+        ? await exchangeQoderPat(secret, lifecycle.signal, fetcher, version, this.realm)
+        : qoderOAuthAuth(secret, context.credential.auth_state, context.credential.account_id);
       const qoderBody = buildQoderRequest(modelId, request, modelConfig, auth);
+      // A full URL from the route wins, but the fallback is this realm's
+      // gateway — not the intl host hardcoded into `MODERN_PROFILE`. Dispatching
+      // a CN credential to `*.qoder.sh` is refused outright.
       const url =
         candidate.endpoint_path && candidate.endpoint_path.startsWith("http")
           ? candidate.endpoint_path
-          : MODERN_PROFILE.chatUrl;
+          : `${qoderGatewayCandidates(this.realm)[0] ?? ""}${QODER_CHAT_PATH}`;
 
       const response = await callQoder(url, qoderBody, modelId, auth, lifecycle.signal, fetcher, version);
       if (!response.ok) throw await mapUpstreamHttpError(response, "qoder");
@@ -671,4 +825,61 @@ class QoderAdapter implements ProviderAdapter {
 
 export function createQoderAdapter(options: QoderAdapterOptions = {}): ProviderAdapter {
   return new QoderAdapter(options);
+}
+
+/**
+ * Adapter for the China deployment.
+ *
+ * Same wire, different gateway host and roster — see `qoder-realm.ts`.
+ */
+export function createQoderCnAdapter(options: QoderAdapterOptions = {}): ProviderAdapter {
+  return new QoderAdapter({ ...options, realm: "cn", providerId: "qodercn" });
+}
+
+/**
+ * A COSY signer for one already-resolved account identity.
+ *
+ * Discovery needs signed headers but lives in `qoder-catalog.ts`, which cannot
+ * import this module (the adapter imports its rosters — that would be a cycle).
+ * Exporting the signer keeps one signing implementation and lets discovery
+ * stay pure and injectable.
+ */
+export function qoderSignerFor(
+  auth: QoderAuth,
+  version = getQoderVersion(),
+): (url: string, body: string) => Record<string, string> {
+  return (url: string, body: string): Record<string, string> =>
+    qoderBuildCosyHeaders(Buffer.from(body, "latin1"), url, auth, version);
+}
+
+/** Qoder's own base64 alphabet transform, for a request body. */
+export function qoderEncodeBody(plaintext: Uint8Array | string): string {
+  const text = typeof plaintext === "string" ? plaintext : new TextDecoder().decode(plaintext);
+  return Buffer.from(transformQoderBody(text)).toString("latin1");
+}
+
+/**
+ * Resolves the dispatch identity for one Qoder credential.
+ *
+ * Shared by the adapter and by discovery: both need the same `QoderAuth` the
+ * COSY signature is built from, and duplicating the PAT-vs-OAuth branch would
+ * let the two drift.
+ */
+export async function resolveQoderAuth(input: {
+  readonly secret: string;
+  readonly authState: unknown;
+  readonly signal: AbortSignal;
+  readonly fetcher: (url: string, init: RequestInit) => Promise<Response>;
+  /** Which deployment mints the job token; a PAT is realm-bound. */
+  readonly realm?: QoderRealm;
+}): Promise<QoderAuth> {
+  const realm = input.realm ?? "intl";
+  if (isQoderPat(input.secret)) {
+    return await exchangeQoderPat(input.secret, input.signal, input.fetcher, getQoderVersion(), realm);
+  }
+  // Discovery is handed only the secret and the persisted state, so the
+  // account id is read from that state — the same place `qoderOAuthAuth` reads
+  // it — rather than being a separate field callers can pass wrongly.
+  const state = parseQoderOAuthState(input.authState);
+  return qoderOAuthAuth(input.secret, input.authState, state?.userId);
 }

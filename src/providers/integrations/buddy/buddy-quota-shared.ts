@@ -1,3 +1,5 @@
+import { asNumber as sharedAsNumber } from "../../../shared/coerce";
+
 /**
  * Shared Tencent billing-meter parsing for the CodeBuddy family
  * (`cb`, `cbcn`, `workbuddy`).
@@ -105,6 +107,9 @@ function refillCadence(acc: TencentBillingAccount): string {
  * JSON (`{accessToken, apiKey, token, ...}`), so both shapes resolve here and a
  * non-JSON credential passes through unchanged.
  */
+// Exported: the usage-detail read (`buddy-usage-shared.ts`) needs the same
+// credential resolution and must not re-implement it — an account stored as an
+// OAuth envelope has to resolve identically on both surfaces.
 export function resolveBearerToken(credential: string): string | null {
   const trimmed = credential.trim();
   if (!trimmed) return null;
@@ -189,11 +194,8 @@ function buildBillingWindows(
     // Kind encodes recurring semantics + cadence for Contract consumers that
     // do not read the optional `recurring` field. Keep label human-readable.
     const kind = `quota:${base.toLowerCase()}${seenRefill[base] > 1 ? `_${seenRefill[base]}` : ""}`;
-    const w = percentWindow(kind, label, pct, resetAt, used, total);
-    // A recurring allowance is its own quota, not spendable credit: an account
-    // at 0% monthly can still serve from a bonus pack, so the usage floor must
-    // not treat this window as the account's balance.
-    windows.push({ ...w, kind, label, recurring: true, accounting: "independent" });
+    const w = percentWindow(kind, label, pct, resetAt, used, total, "pooled");
+    windows.push({ ...w, kind, label, recurring: true });
   }
 
   bonuses.forEach((acc, idx) => {
@@ -203,9 +205,8 @@ function buildBillingWindows(
     const total = billingNum(acc.CapacitySizePrecise, acc.CapacitySize);
     const resetAt = parseBillingResetTime(acc.CycleEndTime);
     const pct = usedPercent(used, total);
-    const w = percentWindow(kind, label, pct, resetAt, used, total);
-    // Bonus packs are the account's actual spendable credit pool.
-    windows.push({ ...w, kind, label, recurring: false, accounting: "pooled" });
+    const w = percentWindow(kind, label, pct, resetAt, used, total, "pooled");
+    windows.push({ ...w, kind, label, recurring: false });
   });
 
   const basePkg = (refills[0] ?? accounts[0] ?? {}) as TencentBillingAccount;
@@ -324,6 +325,8 @@ export async function fetchTencentBillingQuota(
 
   const accounts = extractBillingAccounts(json);
   if (accounts.length === 0) {
+    const enterprise = await fetchEnterpriseUsage(options, bearer);
+    if (enterprise !== undefined) return enterprise;
     return { source, plan: null, windows: [], error: `${display} connected. No credit package found.` };
   }
 
@@ -338,4 +341,77 @@ export async function fetchTencentBillingQuota(
       error: cleanError(error) || `${display} error: ${String(error)}`,
     };
   }
+}
+
+const ENTERPRISE_USAGE_PATH = "/v2/billing/meter/get-enterprise-user-usage";
+
+function enterpriseUsageUrl(resourceUrl: string): string {
+  return resourceUrl.replace(/\/(?:v2\/)?billing\/meter\/get-user-resource$/, ENTERPRISE_USAGE_PATH);
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return sharedAsNumber(value);
+}
+
+/**
+ * Enterprise accounts answer the personal package endpoint with an empty list.
+ * Their assigned credit lives on the enterprise usage endpoint, where `credit`
+ * is spent and `limitNum` is the assignment.
+ */
+async function fetchEnterpriseUsage(
+  options: TencentBillingFetchOptions,
+  bearer: string,
+): Promise<ProviderQuotaResult | undefined> {
+  const enterpriseId = options.headers["X-Enterprise-Id"] ?? options.headers["x-enterprise-id"];
+  if (enterpriseId === undefined || enterpriseId.length === 0) return undefined;
+  let response: Response;
+  try {
+    response = await options.fetcher(enterpriseUsageUrl(options.url), {
+      method: "POST",
+      headers: {
+        ...options.headers,
+        ...(options.uid === undefined || options.uid.length === 0 ? {} : { "X-User-Id": options.uid }),
+        Authorization: `Bearer ${bearer}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: "{}",
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+  } catch {
+    return undefined;
+  }
+  if (!response.ok) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await response.text());
+  } catch {
+    return undefined;
+  }
+  const envelope = asRecord(parsed);
+  const data = asRecord(envelope?.["data"]) ?? envelope;
+  if (data === null) return undefined;
+  const limit = finiteNumber(data["limitNum"]) ?? finiteNumber(data["limit_num"]);
+  const used = finiteNumber(data["credit"]) ?? finiteNumber(data["used_num"]) ?? 0;
+  if (limit === undefined) return undefined;
+  if (limit < 0) {
+    return {
+      source: options.source,
+      plan: "Enterprise",
+      windows: [percentWindow("quota:enterprise", "Enterprise", null, null, null, null, "independent")],
+      error: null,
+    };
+  }
+  const remaining = Math.max(0, limit - used);
+  const usedPercent = limit === 0 ? 100 : Math.min(100, (used / limit) * 100);
+  const resetsAt = typeof data["cycleEndTime"] === "string" ? data["cycleEndTime"] : null;
+  return {
+    source: options.source,
+    plan: "Enterprise",
+    windows: [{
+    ...percentWindow("quota:enterprise", "Enterprise", usedPercent, resetsAt, used, limit, "pooled"),
+      remaining,
+    }],
+    error: null,
+  };
 }

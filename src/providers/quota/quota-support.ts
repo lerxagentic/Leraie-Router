@@ -1,6 +1,7 @@
 import type { FetchLike, ProviderQuotaResult } from "./quota-contracts";
 import { cleanError, unsupportedQuota } from "./quota-contracts";
-import { type ProviderRegistry, resolveProviderId } from "../provider-registry";
+import type { ProviderRegistry } from "../provider-registry";
+import { parseProviderId } from "../provider-registry";
 import { providerBaseUrl } from "../provider-metadata";
 import { createProbeFetch } from "../operations/probe-fetch";
 /**
@@ -53,6 +54,14 @@ export interface QuotaCollectionContext {
   readonly auth_state?: Readonly<Record<string, unknown>> | undefined;
   /** Stored credential kind, for surfaces that differ per auth family. */
   readonly credential_kind?: "api_key" | "oauth" | "none" | undefined;
+  /**
+   * The account the reading belongs to, when the caller knows it.
+   *
+   * Needed by collectors that can reuse a value captured from real traffic:
+   * that reading is keyed by account, so without this the collector cannot
+   * find it and spends a request rediscovering what dispatch already learned.
+   */
+  readonly accountId?: string | undefined;
 }
 
 /** Provider quota callback supplied by the canonical provider registry. */
@@ -71,7 +80,7 @@ export async function fetchProviderQuota(
   context?: QuotaCollectionContext,
 ): Promise<ProviderQuotaResult> {
   try {
-    const canonicalId = resolveProviderId(providerId);
+    const canonicalId = parseProviderId(providerId);
     const handler = await registry.resolveQuotaCollector(canonicalId);
     if (handler === undefined) return unsupportedQuota(providerId);
     return await handler(credential, fetcher, context);

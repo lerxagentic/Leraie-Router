@@ -1,9 +1,15 @@
 import type { FetchLike, ProviderQuotaResult } from "../../quota/quota-contracts";
 import type { QuotaCollectionContext } from "../../quota/quota-support";
 import { providerBaseUrl } from "../../provider-metadata";
-import { buildWorkBuddyUserAgent } from "../../operations/client-versions";
+import {
+  buildWorkBuddyUserAgent,
+  getWorkBuddyClientVersion,
+  getWorkBuddyCnClientVersion,
+  getWorkBuddyCliVersion,
+} from "../../operations/client-versions";
 import { WORKBUDDY_DOMAIN } from "./workbuddy-shared";
 import { fetchTencentBillingQuota } from "./buddy-quota-shared";
+import { fetchBuddyRequestUsage, type BuddyUsageResult } from "./buddy-usage-shared";
 import { buddyAccountUid } from "./buddy-oauth-shared";
 
 /**
@@ -20,14 +26,27 @@ import { buddyAccountUid } from "./buddy-oauth-shared";
  * WorkBuddy-specific.
  */
 
+/**
+ * The CN billing realm's host.
+ *
+ * The reference bills the CN realm here rather than on the CN chat host
+ * (`www.workbuddy.cn`): billing is a separate service, and the chat host does
+ * not serve the meter path.
+ */
+const WORKBUDDY_CN_BILLING_BASE_URL = "https://www.codebuddy.cn";
+
 export const WORKBUDDY_USAGE_URL =
   `${providerBaseUrl("workbuddy")}/v2/billing/meter/get-user-resource`;
 
-async function billingHeaders(enterpriseId?: string): Promise<Record<string, string>> {
+async function billingHeaders(
+  domain: string,
+  clientVersion: string,
+  enterpriseId?: string,
+): Promise<Record<string, string>> {
   return {
-    "User-Agent": buildWorkBuddyUserAgent(),
+    "User-Agent": buildWorkBuddyUserAgent(clientVersion, getWorkBuddyCliVersion()),
     "X-Product": "SaaS",
-    "X-Domain": WORKBUDDY_DOMAIN,
+    "X-Domain": domain,
     "X-Requested-With": "XMLHttpRequest",
     "X-CodeBuddy-Request": "1",
     "Accept-Language": "en-US",
@@ -48,18 +67,95 @@ export async function fetchWorkBuddyQuota(
   fetcher: FetchLike,
   context?: QuotaCollectionContext,
 ): Promise<ProviderQuotaResult> {
+  return fetchWorkBuddyQuotaFor({
+    providerId: "workbuddy",
+    display: "WorkBuddy",
+    domain: WORKBUDDY_DOMAIN,
+    credential,
+    fetcher,
+    ...(context === undefined ? {} : { context }),
+  });
+}
+
+export async function fetchWorkBuddyCnQuota(
+  credential: string,
+  fetcher: FetchLike,
+  context?: QuotaCollectionContext,
+): Promise<ProviderQuotaResult> {
+  return fetchWorkBuddyQuotaFor({
+    providerId: "workbuddycn",
+    display: "WorkBuddy CN",
+    domain: "www.workbuddy.cn",
+    credential,
+    fetcher,
+    ...(context === undefined ? {} : { context }),
+  });
+}
+
+async function fetchWorkBuddyQuotaFor(args: {
+  readonly providerId: "workbuddy" | "workbuddycn";
+  readonly display: string;
+  readonly domain: string;
+  readonly credential: string;
+  readonly fetcher: FetchLike;
+  readonly context?: QuotaCollectionContext;
+}): Promise<ProviderQuotaResult> {
+  const { providerId, display, domain, credential, fetcher, context } = args;
   const authState = typeof context?.auth_state === "object" && context?.auth_state !== null
     ? (context.auth_state as Record<string, unknown>)
     : undefined;
   const enterpriseId = typeof authState?.enterpriseId === "string" ? authState.enterpriseId : undefined;
+  const clientVersion = providerId === "workbuddycn"
+    ? getWorkBuddyCnClientVersion()
+    : getWorkBuddyClientVersion();
+  // The reference bills the CN realm on `www.codebuddy.cn`, not the chat host:
+  // the billing realm is a different service from the one that serves chat,
+  // and the CN chat host answers the meter path with an HTML error page.
+  const billingBase = providerId === "workbuddycn" ? WORKBUDDY_CN_BILLING_BASE_URL : providerBaseUrl(providerId);
   return fetchTencentBillingQuota({
-    source: "workbuddy",
-    display: "WorkBuddy",
-    url: WORKBUDDY_USAGE_URL,
-    headers: await billingHeaders(enterpriseId),
+    source: providerId,
+    display,
+    url: `${billingBase}/v2/billing/meter/get-user-resource`,
+    headers: await billingHeaders(domain, clientVersion, enterpriseId),
     credential,
     fetcher,
-    defaultPlan: "WorkBuddy",
+    defaultPlan: display,
     uid: buddyAccountUid(credential),
   });
 }
+
+/**
+ * Real credit deductions for one WorkBuddy account.
+ *
+ * Mirrors {@link fetchWorkBuddyQuotaFor} in every respect but the endpoint —
+ * same billing host, same client-version identity headers, same account UID —
+ * because the usage-detail surface is the billing meter's other read.
+ */
+export async function fetchWorkBuddyRequestUsage(
+  credential: string,
+  fetcher: FetchLike,
+  args: {
+    readonly providerId?: "workbuddy" | "workbuddycn";
+    readonly days?: number;
+    readonly context?: QuotaCollectionContext;
+  } = {},
+): Promise<BuddyUsageResult> {
+  const providerId = args.providerId ?? "workbuddy";
+  const domain = providerId === "workbuddycn" ? "www.workbuddy.cn" : WORKBUDDY_DOMAIN;
+  const authState = typeof args.context?.auth_state === "object" && args.context?.auth_state !== null
+    ? (args.context.auth_state as Record<string, unknown>)
+    : undefined;
+  const enterpriseId = typeof authState?.enterpriseId === "string" ? authState.enterpriseId : undefined;
+  const clientVersion = providerId === "workbuddycn"
+    ? getWorkBuddyCnClientVersion()
+    : getWorkBuddyClientVersion();
+  return fetchBuddyRequestUsage({
+    url: `${providerBaseUrl(providerId)}/billing/meter/get-user-request-usage`,
+    headers: await billingHeaders(domain, clientVersion, enterpriseId),
+    credential,
+    fetcher,
+    days: args.days ?? 30,
+    uid: buddyAccountUid(credential),
+  });
+}
+

@@ -340,6 +340,7 @@ export function classifyUpstreamFailure(error: unknown): UpstreamFailurePolicy {
     mutatesAccount || // account-scoped failure: try a sibling regardless of status
     error.code === "capability_unsupported" ||
     error.code === "model_not_found" ||
+    error.code === "upstream_queued" ||
     error.code === "admission_unavailable" ||
     error.code === "capacity_exhausted" ||
     error.code === "accounts_unavailable" ||
@@ -709,6 +710,62 @@ export function classifyUpstreamError(
 }
 
 
+export function queueRetryAfterMs(body: unknown): number | undefined {
+  if (!isRecord(body)) return undefined;
+  const envelope = isRecord(body.error) ? body.error : body;
+  for (const source of [envelope, body]) {
+    for (const key of ["retryAfterSeconds", "retry_after_seconds", "retryAfterMs", "retry_after"]) {
+      const raw = source[key];
+      if (typeof raw === "number" && Number.isFinite(raw) && raw > 0) {
+        return key.toLowerCase().endsWith("ms") ? Math.round(raw) : Math.round(raw * 1000);
+      }
+      if (typeof raw === "string") {
+        const value = Number(raw.trim());
+        if (Number.isFinite(value) && value > 0) {
+          return key.toLowerCase().endsWith("ms") ? Math.round(value) : Math.round(value * 1000);
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+export function isUpstreamQueued(body: unknown): boolean {
+  if (!isRecord(body)) return false;
+  const envelope = isRecord(body.error) ? body.error : body;
+  if (envelope.isQueued === true || body.isQueued === true) return true;
+  if (envelope.queued === true || body.queued === true) return true;
+  for (const candidate of [envelope.code, body.code]) {
+    if (typeof candidate === "string" && candidate.trim() === "10605") return true;
+  }
+  for (const candidate of [envelope.message, envelope.msg, body.message, body.msg]) {
+    if (typeof candidate !== "string") continue;
+    const lower = candidate.toLowerCase();
+    if (/\bqueued\b|\bis queue\b|resource_limit/.test(lower)) return true;
+  }
+  return false;
+}
+
+export function upstreamQueuedError(
+  providerId: string,
+  retryAfterMs: number | undefined,
+  detail: string,
+): GatewayError {
+  return new GatewayError(
+    "upstream_queued",
+    503,
+    detail.length > 0
+      ? detail
+      : "The upstream has queued this request. Retry after the stated interval.",
+    {
+      providerId,
+      reason: "upstream-queued",
+      ...(retryAfterMs === undefined ? {} : { retryAfterMs, cooldownMs: retryAfterMs }),
+    },
+    "upstream",
+  );
+}
+
 /** Converts one failed upstream response into the shared GatewayError contract. */
 export async function mapUpstreamHttpError(response: Response, providerId: string): Promise<never> {
   const text = await response.text().catch(() => "");
@@ -721,12 +778,20 @@ export async function mapUpstreamHttpError(response: Response, providerId: strin
     parsedBody = undefined;
   }
   const identifier = upstreamErrorIdentifier(parsedBody) ?? providerCode;
-  const classification = isContextLengthFailure(parsedBody)
-    ? { code: "context_length_exceeded" as const, status: 413, origin: "upstream" as const }
-    : classifyUpstreamError(response.status, identifier);
+  const upstreamQueued = isUpstreamQueued(parsedBody);
+  const queuedWaitMs = upstreamQueued
+    ? (queueRetryAfterMs(parsedBody) ??
+      (parseUpstreamBackoff(response.headers) ?? undefined))
+    : undefined;
+  const classification = upstreamQueued
+    ? { code: "upstream_queued" as const, status: 503, origin: "upstream" as const, rateLimitScope: undefined, credentialEvidence: false }
+    : isContextLengthFailure(parsedBody)
+      ? { code: "context_length_exceeded" as const, status: 413, origin: "upstream" as const, rateLimitScope: undefined, credentialEvidence: false }
+      : classifyUpstreamError(response.status, identifier);
   const extracted = extractUpstreamMessage(parsedBody ?? text);
   const message = (extracted.length > 0 ? extracted : text.trim() || `Provider returned HTTP ${response.status}.`).slice(0, MAX_UPSTREAM_ERROR_BYTES).replace(/[\r\n]+/g, " ");
-  const retryAfterMs = parseUpstreamBackoff(response.headers);
+  const headerWaitMs = parseUpstreamBackoff(response.headers);
+  const retryAfterMs = queuedWaitMs ?? headerWaitMs;
   const requestId = upstreamRequestId(response.headers);
   const reportedProviderCode = providerCode ?? identifier;
   throw new GatewayError(classification.code, classification.status, message, {
@@ -736,6 +801,7 @@ export async function mapUpstreamHttpError(response: Response, providerId: strin
     ...(requestId ? { upstreamRequestId: requestId } : {}),
     raw: text.slice(0, MAX_UPSTREAM_ERROR_BYTES).replace(/[\r\n]+/g, " "),
     ...(retryAfterMs === null || retryAfterMs === undefined ? {} : { retryAfterMs }),
+    ...(queuedWaitMs !== undefined ? { reason: "upstream-queued", cooldownMs: queuedWaitMs } : {}),
     ...(classification.rateLimitScope
       ? { rateLimitScope: classification.rateLimitScope }
       : {}),

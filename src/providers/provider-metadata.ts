@@ -1,5 +1,6 @@
 import type { WireFamily } from "../transport/canonical-model";
 
+import { QODER_CHAT_PATH, QODER_REALMS } from "./integrations/qoder/qoder-realm";
 import { TRAE_CHAT_PATH, TRAE_REALMS } from "./integrations/trae/trae-realm";
 
 /** OpenAI-compatible wire overrides persisted for bundled and BYOK providers. */
@@ -168,12 +169,20 @@ const RAW_BUNDLED_PROVIDER_METADATA = [
     // a custom User-Agent for it — the field would be silently ignored.
     id: "commandcode",
     displayName: "Command Code",
-    baseUrl: "https://api.commandcode.ai/alpha/generate",
+    baseUrl: "https://api.commandcode.ai/provider/v1",
     hasAdapterUserAgent: true,
     credentialUrl: "https://commandcode.ai/studio",
     credentialHint: "Use the API key from the Command Code CLI, or create one in the studio.",
   },
-  { id: "qoder", displayName: "Qoder", baseUrl: "https://api2.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1", hasAdapterUserAgent: true, credentialUrl: "https://qoder.com", credentialHint: "Signed in with a Qoder account; there is no key to paste." },
+  { id: "qoder", displayName: "Qoder", baseUrl: "https://api2.qoder.sh/algo/api/v2/service/pro/sse/agent_chat_generation?FetchKeys=llm_model_result&AgentId=agent_common&Encode=1", hasAdapterUserAgent: true, credentialUrl: "https://qoder.com/account/integrations", credentialHint: "Paste a Personal Access Token (pt-...) from the Qoder integrations page, or sign in with your Qoder account." },
+  {
+    id: "qodercn",
+    displayName: "Qoder CN",
+    baseUrl: `${QODER_REALMS.cn.gateway}${QODER_CHAT_PATH}`,
+    hasAdapterUserAgent: true,
+    credentialUrl: `${QODER_REALMS.cn.website}/account/integrations`,
+    credentialHint: "Paste a Personal Access Token (pt-...) from the Qoder CN integrations page, or sign in with your Qoder China account.",
+  },
   { id: "trae", displayName: "Trae", baseUrl: `${TRAE_REALMS.intl.core}${TRAE_CHAT_PATH}`, hasAdapterUserAgent: true, credentialUrl: "https://www.trae.ai/", credentialHint: "Paste a Trae account export (accessToken + refreshToken) or the raw access token from an international Trae account." },
   {
     id: "traecn",
