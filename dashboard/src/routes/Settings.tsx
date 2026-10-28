@@ -1,5 +1,6 @@
-import { Eye, Shield } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Eye, Shield, Bell, Send } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { consoleRequest } from "../data/api";
 import { Select } from "../components/ui/select";
 import { Input } from "../components/ui/input";
 import { Button } from "../components/ui/button";
@@ -201,6 +202,177 @@ function PasswordChangeForm(): ReactNode {
   );
 }
 
+interface NotificationStatus {
+  telegram: { enabled: boolean; configured: boolean; chatId: string };
+  webhook: { enabled: boolean; configured: boolean; url: string };
+}
+
+function NotificationsPanel(): ReactNode {
+  const [loading, setLoading] = useState(true);
+  const [tgEnabled, setTgEnabled] = useState(false);
+  const [tgToken, setTgToken] = useState("");
+  const [tgChatId, setTgChatId] = useState("");
+  const [whEnabled, setWhEnabled] = useState(false);
+  const [whUrl, setWhUrl] = useState("");
+  const [whSecret, setWhSecret] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+
+  useEffect(() => {
+    void consoleRequest<NotificationStatus>("/settings/notifications")
+      .then((res) => {
+        setTgEnabled(res.telegram.enabled);
+        setTgChatId(res.telegram.chatId || "");
+        setWhEnabled(res.webhook.enabled);
+        setWhUrl(res.webhook.url || "");
+      })
+      .catch(() => undefined)
+      .finally(() => setLoading(false));
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await consoleRequest("/settings/notifications", {
+        method: "PUT",
+        body: JSON.stringify({
+          telegram: {
+            enabled: tgEnabled,
+            ...(tgToken ? { botToken: tgToken } : {}),
+            chatId: tgChatId,
+          },
+          webhook: {
+            enabled: whEnabled,
+            url: whUrl,
+            ...(whSecret ? { secret: whSecret } : {}),
+          },
+        }),
+      });
+      toast.success("Notification settings saved");
+      setTgToken("");
+      setWhSecret("");
+    } catch {
+      toast.error("Failed to save notifications");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sendTest = async () => {
+    setTesting(true);
+    try {
+      const res = await consoleRequest<{ telegram: string; webhook: string }>(
+        "/settings/notifications/test",
+        { method: "POST" },
+      );
+      toast.success(`Test sent — Telegram: ${res.telegram}, Webhook: ${res.webhook}`);
+    } catch {
+      toast.error("Failed to send test alert");
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  if (loading) return <LoadingState label="Loading notification settings…" />;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Alert Notifications"
+        subtitle="Telegram Bot & Webhook alerts for quota limits, proxy failures, and silent jobs. Tokens are never exposed once saved."
+        icon={<Bell size={16} />}
+      />
+      <CardBody>
+        <Stack gap="16px">
+          {/* Telegram */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={tgEnabled}
+                onChange={(e) => setTgEnabled(e.target.checked)}
+              />
+              Enable Telegram Alerts
+            </label>
+            {tgEnabled && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "4px" }}>
+                <div>
+                  <label style={{ fontSize: "11.5px", color: "var(--text-tertiary)", display: "block", marginBottom: "4px" }}>
+                    Bot Token (blank = keep stored)
+                  </label>
+                  <Input
+                    type="password"
+                    placeholder="123456789:ABCdef..."
+                    value={tgToken}
+                    onChange={(e) => setTgToken(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: "11.5px", color: "var(--text-tertiary)", display: "block", marginBottom: "4px" }}>
+                    Chat ID
+                  </label>
+                  <Input
+                    placeholder="-100... or user id"
+                    value={tgChatId}
+                    onChange={(e) => setTgChatId(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Webhook */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+            <label style={{ display: "flex", alignItems: "center", gap: "8px", fontSize: "13px", fontWeight: 600, cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={whEnabled}
+                onChange={(e) => setWhEnabled(e.target.checked)}
+              />
+              Enable Webhook Alerts
+            </label>
+            {whEnabled && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "12px", marginTop: "4px" }}>
+                <div>
+                  <label style={{ fontSize: "11.5px", color: "var(--text-tertiary)", display: "block", marginBottom: "4px" }}>
+                    Webhook URL
+                  </label>
+                  <Input
+                    placeholder="https://your-domain.com/webhook"
+                    value={whUrl}
+                    onChange={(e) => setWhUrl(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize: "11.5px", color: "var(--text-tertiary)", display: "block", marginBottom: "4px" }}>
+                    HMAC Secret (blank = keep stored)
+                  </label>
+                  <Input
+                    type="password"
+                    placeholder="Secret for X-Lerx-Signature"
+                    value={whSecret}
+                    onChange={(e) => setWhSecret(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          <Inline gap="8px">
+            <Button variant="primary" disabled={saving} onClick={save}>
+              {saving ? "Saving…" : "Save Alerts"}
+            </Button>
+            <Button variant="secondary" disabled={testing} onClick={sendTest}>
+              <Send size={13} style={{ marginRight: "6px" }} />
+              {testing ? "Sending…" : "Send Test Alert"}
+            </Button>
+          </Inline>
+        </Stack>
+      </CardBody>
+    </Card>
+  );
+}
+
 export default function Settings(): ReactNode {
   return (
     <div className="settings-column">
@@ -215,6 +387,9 @@ export default function Settings(): ReactNode {
           <PasswordChangeForm />
         </CardBody>
       </Card>
+
+      {/* Outbound Alerts */}
+      <NotificationsPanel />
 
       {/* Privacy */}
       <PrivacyPanel />
