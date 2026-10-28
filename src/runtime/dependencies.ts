@@ -41,6 +41,7 @@ import {
   ValidatedNetworkBindingFactory,
 } from "../network/pool/resolver";
 import { NetworkPoolSelector } from "../network/pool/selector";
+import { restorePoolProbeVerdicts, restoreProviderCooldownMarkers } from "../network/pool-cooldown-store";
 import { ScheduledTaskRegistry } from "../workers/tasks";
 import { quotaRefreshSweep } from "../workers/quota-refresh-worker";
 import { checkinEgressForPass } from "../workers/checkin-egress";
@@ -269,6 +270,17 @@ export async function buildProductionDeps(): Promise<ProductionDeps> {
   });
   const telemetryBuffer = new TelemetryBatchBuffer(db);
   const poolSelector = new NetworkPoolSelector(redis);
+  try {
+    const restored = await restoreProviderCooldownMarkers(poolSelector, db);
+    const replayed = await restorePoolProbeVerdicts(poolSelector, db);
+    if (restored > 0 || replayed > 0) {
+      log.info("[pool-selector] restored provider cooldown state", { mirrored: restored, probeVerdictsApplied: replayed });
+    }
+  } catch (error) {
+    log.warn("[pool-selector] failed to restore provider cooldown state from database", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
   const poolAgentResolver = new PoolAgentResolver(
     new DrizzleNetworkPoolLoader(db),
     { ssrfPolicy, db },

@@ -372,6 +372,15 @@ export const networkPools = pgTable("network_pools", {
   lastSpeedtestError: text("last_speedtest_error"),
   /** When the last speed-test ran. */
   lastSpeedtestAt: timestamp("last_speedtest_at", { withTimezone: true }),
+  providerProbeProviderId: text("provider_probe_provider_id"),
+  providerProbeStatus: text("provider_probe_status"),
+  providerProbeHttpStatus: integer("provider_probe_http_status"),
+  providerProbeReason: text("provider_probe_reason"),
+  providerProbeLatencyMs: integer("provider_probe_latency_ms"),
+  providerProbeAt: timestamp("provider_probe_at", { withTimezone: true }),
+  providerProbeEndpoint: text("provider_probe_endpoint"),
+  providerCooldowns: jsonb("provider_cooldowns")
+    .$type<Record<string, { until: number; reason: string; blocked?: boolean }>>(),
   /** Metered egress totals, flushed from the in-memory socket counters on
    * every pool-touching write so the quota bar survives a restart. */
   bytesSentTotal: bigint("bytes_sent_total", { mode: "number" }).notNull().default(0),

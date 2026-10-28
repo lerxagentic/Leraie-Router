@@ -7,9 +7,10 @@ import type {
 } from "../../provider-registry";
 import { resolveInboundSessionId } from "../../operations/session-resolution";
 import { buddyConversationHeaders } from "./buddy-conversation-headers";
-import { buddyEnterprise, buddyUserId, resolveBuddyIdentity } from "./buddy-identity";
+import { buddyEnterprise, buddyUserId, resolveBuddyDeviceBinding, resolveBuddyIdentity } from "./buddy-identity";
+import { buddyDeviceTokenHeaders } from "./workbuddy-shared";
+import { CODEBUDDY_TURING_CONFIG } from "./turing-device-token";
 import { buildCodeBuddyUserAgent, getCodeBuddyCnVersion, getCodeBuddyVersion } from "../../operations/client-versions";
-import { readBuddyDeviceToken } from "./workbuddy-shared";
 import { buddyCliHeaders, buddyCliTraceHeaders } from "./buddy-cli-headers";
 
 /** Client identity variant behind the per-request CodeBuddy headers. */
@@ -37,7 +38,6 @@ export async function codebuddyHeaders(
 ): Promise<Record<string, string>> {
   const identity = variant === "IDE" ? "IDE" : "CLI";
   const ua = buildCodeBuddyUserAgent(identity);
-  const deviceToken = readBuddyDeviceToken(context);
   const conversationId = resolveInboundSessionId(context, request);
   const conversation = buddyConversationHeaders({
     ...(conversationId === undefined ? {} : { conversationId }),
@@ -62,7 +62,7 @@ export async function codebuddyHeaders(
       }),
     };
   }
-  return {
+  const headers: Record<string, string> = {
     accept: "text/event-stream",
     "User-Agent": ua,
     "X-Product": "SaaS",
@@ -74,8 +74,18 @@ export async function codebuddyHeaders(
     "x-codebuddy-request": "1",
     "X-Agent-Purpose": "conversation",
     ...conversation,
-    ...(deviceToken === undefined ? {} : { "X-Device-Token": deviceToken }),
   };
+  const binding = resolveBuddyDeviceBinding(context);
+  if (binding !== undefined) {
+    headers["x-device-id-list"] = JSON.stringify({ qimei36: binding });
+  }
+  Object.assign(headers, await buddyDeviceTokenHeaders({
+    realm: "intl",
+    context,
+    cliIdentity,
+    turingConfig: CODEBUDDY_TURING_CONFIG,
+  }));
+  return headers;
 }
 
 /**

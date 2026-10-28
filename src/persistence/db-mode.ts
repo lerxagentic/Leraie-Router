@@ -47,7 +47,10 @@ export function resolveDbMode(env: NodeJS.ProcessEnv = process.env): DbMode {
  * `~/.local/share/Cartethyia`) on Linux.
  */
 export function resolveDataDir(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env.CARTETHYIA_DATA_DIR?.trim();
+  const override =
+    env.LERX_ROUTER_DATA_DIR?.trim() ||
+    env.CARTETHYIA_DATA_DIR?.trim() ||
+    env.DATA_DIR?.trim();
   if (override) return override;
   if (process.platform === "win32") {
     const roaming = env.APPDATA?.trim();

@@ -17,7 +17,13 @@ import {
 } from "../../operations/client-versions";
 import { buddyConversationHeaders } from "./buddy-conversation-headers";
 import { buddyCliHeaders, buddyCliTraceHeaders } from "./buddy-cli-headers";
-import { buddyEnterprise, buddyUserId, resolveBuddyIdentity } from "./buddy-identity";
+import { buddyEnterprise, buddyUserId, resolveBuddyDeviceBinding, resolveBuddyIdentity } from "./buddy-identity";
+import {
+  getTuringDeviceTokenService,
+  resolveTuringSdkRoot,
+  type TuringSdkConfig,
+  WORKBUDDY_TURING_CONFIG,
+} from "./turing-device-token";
 
 /**
  * WorkBuddy serves chat from a versioned path on a base URL that carries no
@@ -147,9 +153,34 @@ export async function workbuddyHeaders(
     headers["x-machine-id"] = deriveAccountStableId(accountId, "machine");
     headers["x-session-id"] = deriveAccountStableId(accountId, "session");
   }
-  const deviceToken = readBuddyDeviceToken(context);
-  if (deviceToken !== undefined) headers["x-device-token"] = deviceToken;
+  const binding = resolveBuddyDeviceBinding(context);
+  if (binding !== undefined) {
+    headers["x-device-id-list"] = JSON.stringify({ qimei36: binding });
+  }
+  Object.assign(headers, await buddyDeviceTokenHeaders({
+    realm: domain.endsWith(".cn") ? "cn" : "intl",
+    context,
+    cliIdentity,
+  }));
   return headers;
+}
+
+export async function buddyDeviceTokenHeaders(args: {
+  realm: "intl" | "cn";
+  context: ProviderDispatchContext | undefined;
+  cliIdentity: boolean | undefined;
+  turingConfig?: TuringSdkConfig;
+}): Promise<Record<string, string>> {
+  const { context, cliIdentity, turingConfig } = args;
+  void args.realm;
+  if (resolveBuddyIdentity(context, cliIdentity) === "cli") return {};
+  if (resolveTuringSdkRoot() !== null) {
+    const sdkHeaders = await getTuringDeviceTokenService(turingConfig ?? WORKBUDDY_TURING_CONFIG).headersForRequest(false);
+    if (sdkHeaders["x-device-token"] !== undefined) return sdkHeaders;
+  }
+  const token = readBuddyDeviceToken(context);
+  if (token !== undefined) return { "x-device-token": token };
+  return { "x-device-token-error": "sdk_not_initialized" };
 }
 
 /**

@@ -379,6 +379,17 @@ export const PROVIDER_CAPABILITIES = {
     loadAdapter: async () => createApiKeyAdapter((await import("./integrations/bai")).BAI_SPEC),
     loadModels: async () => (await import("./integrations/bai")).BAI_FALLBACK_MODELS,
   },
+  inception: {
+    endpointPathsByWireFamily: { chat: "/chat/completions" },
+    loadAdapter: async () => createApiKeyAdapter((await import("./integrations/inception/provider")).INCEPTION_SPEC),
+    loadModels: async () => (await import("./integrations/inception/provider")).INCEPTION_MODELS,
+    loadModelDiscovery: async () => async ({ baseUrl, credential, fetcher }) =>
+      (await import("./integrations/inception/provider")).discoverInceptionFreeModels({
+        baseUrl,
+        ...(typeof credential === "string" && credential.length > 0 ? { credential } : {}),
+        ...(fetcher === undefined ? {} : { fetcher }),
+      }),
+  },
   tokenharbor: {
     loadAdapter: async () => createApiKeyAdapter((await import("./integrations/tokenharbor")).TOKENHARBOR_SPEC),
     loadModels: async () => (await import("./integrations/tokenharbor")).TOKENHARBOR_FALLBACK_MODELS,

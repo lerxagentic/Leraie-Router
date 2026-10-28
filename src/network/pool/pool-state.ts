@@ -7,6 +7,7 @@ export interface ProxyCooldownEntry {
   readonly providerId: string;
   readonly until: number;
   readonly reason: string;
+  readonly blocked?: boolean;
 }
 
 /**

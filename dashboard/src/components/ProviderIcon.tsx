@@ -53,6 +53,7 @@ const iconAssets: Record<string, { file: string; ext: "svg" | "webp" }> = {
   hermes: { file: "hermes", ext: "webp" },
   nous: { file: "nous-research", ext: "svg" },
   bai: { file: "bai", ext: "svg" },
+  inception: { file: "inception", ext: "svg" },
   cline: { file: "cline", ext: "webp" },
   cerebras: { file: "cerebras", ext: "webp" },
   qoder: { file: "qoder", ext: "webp" },

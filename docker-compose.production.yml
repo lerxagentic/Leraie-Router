@@ -14,6 +14,9 @@ services:
       DASHBOARD_DIST: /app/dist/dashboard
       REDIS_MODE: normal
       REDIS_URL: redis://redis:6379
+      CARTETHYIA_DATA_DIR: /app/data
+      LERX_ROUTER_DATA_DIR: /app/data
+      DATA_DIR: /app/data
     depends_on:
       redis:
         condition: service_healthy

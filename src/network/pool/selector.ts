@@ -48,6 +48,8 @@ const MAX_PROXY_WEIGHT = 1000;
 function poolInflightTtlSeconds(): number {
   return resolveInflightTtlSeconds();
 }
+export const PROVIDER_BLOCK_MS = 10 * 365 * 24 * 60 * 60 * 1000;
+
 export function effectiveConcurrency(limit: number): number {
   if (!Number.isInteger(limit) || limit < 1) return 0;
   return limit;
@@ -166,6 +168,11 @@ export class NetworkPoolSelector {
 
   private cooldownKey(poolId: string, providerId: string): string {
     return `${poolId}::${providerId.toLowerCase()}`;
+  }
+
+  hydrateProviderCooldown(entry: ProxyCooldownEntry): void {
+    enforceCooldownLimit(this.state.cooldowns);
+    this.state.cooldowns.set(this.cooldownKey(entry.poolId, entry.providerId), entry);
   }
 
   async flagProviderCooldown(

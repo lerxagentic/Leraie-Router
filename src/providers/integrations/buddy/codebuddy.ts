@@ -20,6 +20,7 @@ import { BUDDY_INTL_MODELS_PATH, fetchBuddyDirectoryModels } from "./buddy-disco
 import {
   applyBuddySystemPrompt,
   buddyPrePayloadCommon,
+  injectBuddyParallelToolCalls,
   normalizeBuddyToolNames,
   personaTextOf,
 } from "./buddy-chat-shared";
@@ -78,6 +79,7 @@ function codeBuddyIntlPrePayload(
     );
   }
   normalizeBuddyToolNames(payload);
+  injectBuddyParallelToolCalls(payload, request);
   void request;
 }
 
