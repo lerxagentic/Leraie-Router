@@ -872,6 +872,11 @@ export interface ConsoleSettingsPreferences {
    */
   activePersonaId?: string | null;
   /**
+   * Prompt Injections & Model Variants (9Router Pro parity):
+   * Global, per-API-key, per-model, and per-variant prompt injections (system & chat script modes).
+   */
+  promptInjections?: import("../transport/request/prompt-injection").PromptInjectionStoreData;
+  /**
    * Scheduled native backup delivered to a Telegram chat (mirrors 9Router's
    * auto-backup). `lastSentAt`/`lastError` are scheduler state, persisted so
    * a restart never re-sends a backup that already went out.

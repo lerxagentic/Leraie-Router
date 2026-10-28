@@ -27,6 +27,7 @@ import { belowUsageFloor, type UsageFloorPolicy } from "./usage-floor";
 import { sharedClaudeSlowLanes } from "../../providers/integrations/claude/claude-slow-lane";
 import type { ProviderQuotaWindow } from "../../providers/quota/quota-contracts";
 import { log } from "../../observability/logger";
+import { sortCandidatesByLru } from "./lru-overlay";
 import {
   lookupRouteCandidates,
   parseModelReference,
@@ -855,6 +856,8 @@ export class RoutingEngine {
         else if (saturated.has(candidate)) buckets[3]!.push(candidate);
         else buckets[0]!.push(candidate);
       }
+      // Apply Windowed-LRU order across fresh accounts to prevent account collision
+      buckets[0] = sortCandidatesByLru(buckets[0]!);
       // A cooling candidate that is also saturated is still ordered as cooling:
       // cooling means "the upstream refused this and stated when to come back",
       // which is stronger evidence than a local counter being full.

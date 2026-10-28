@@ -27,6 +27,7 @@ import type { ProxyRequestState } from "../request/state";
 import type { TelemetryBatchBuffer } from "../../observability/telemetry-buffer";
 import { flagPoolCooldown } from "../../network/pool-health";
 import { completeAttempt, estimatedUsage, type ProviderExchangeCapture } from "./attempt-finalize";
+import { stampAccountLastUsed } from "../routing/lru-overlay";
 import { repriceUsage } from "../../providers/usage";
 import { shouldCooldownPool, isOAuthCredentialInvalidated } from "./retry-policy";
 import { classifyUpstreamFailure } from "../failure-policy";
@@ -143,6 +144,9 @@ export async function runAttemptLoop<TResult, TAdapter>(
       // the estimate is only charged once the request truly consumed
       // upstream resources; the lease and reservation are held from here on.
       bindingEstablished = true;
+      if (candidate.provider_account_id) {
+        stampAccountLastUsed(candidate.provider_account_id);
+      }
       state.startProviderFlight();
       // Realtime dispatch signal: emitted the instant the provider binding is
       // secured, BEFORE the upstream call — so live observers (the Usage

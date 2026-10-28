@@ -349,6 +349,7 @@ export function classifyUpstreamFailure(error: unknown): UpstreamFailurePolicy {
     error.code === "authentication_failed" ||
     error.code === "proxy_auth_required" ||
     error.code === "deadline_exceeded" ||
+    error.code === "context_length_exceeded" ||
     retryableByStatus;
   return {
     retryable,

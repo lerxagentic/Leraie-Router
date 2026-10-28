@@ -99,20 +99,49 @@ function initialsOf(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+const failedFavicons = new Set<string>();
+
+export function getFaviconCandidates(baseUrl?: string): string[] {
+  if (!baseUrl || typeof baseUrl !== "string") return [];
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    return [];
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return [];
+  const host = url.hostname;
+  if (!host || host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return [];
+  const out: string[] = [];
+  const originIcon = `${url.protocol}//${host}/favicon.ico`;
+  if (!failedFavicons.has(originIcon)) out.push(originIcon);
+  const labels = host.split(".");
+  if (labels.length > 2) {
+    const parentIcon = `${url.protocol}//${labels.slice(1).join(".")}/favicon.ico`;
+    if (parentIcon !== originIcon && !failedFavicons.has(parentIcon)) out.push(parentIcon);
+  }
+  return out;
+}
+
 export const ProviderIcon = memo(function ProviderIcon({
   icon,
   name,
+  baseUrl,
   size = 32,
   style,
   className,
 }: {
   icon: string;
   name: string;
+  baseUrl?: string;
   size?: number;
   style?: React.CSSProperties;
   className?: string;
 }) {
   const [failed, setFailed] = useState(() => failedIcons.has(icon));
+  const [faviconIdx, setFaviconIdx] = useState(0);
+  const favicons = getFaviconCandidates(baseUrl);
+  const currentFavicon = favicons[faviconIdx];
   const asset = assetFor(icon);
   return (
     <div
@@ -133,15 +162,31 @@ export const ProviderIcon = memo(function ProviderIcon({
       aria-label={`${name} provider`}
     >
       {failed ? (
-        <span
-          style={{
-            fontSize: `${Math.max(10, Math.floor(size * 0.35))}px`,
-            fontWeight: 700,
-            color: "var(--text-secondary)",
-          }}
-        >
-          {initialsOf(name)}
-        </span>
+        currentFavicon ? (
+          <img
+            src={currentFavicon}
+            alt=""
+            width={size}
+            height={size}
+            loading="lazy"
+            decoding="async"
+            style={{ width: "100%", height: "100%", objectFit: "contain", padding: "2px" }}
+            onError={() => {
+              failedFavicons.add(currentFavicon);
+              setFaviconIdx((i) => i + 1);
+            }}
+          />
+        ) : (
+          <span
+            style={{
+              fontSize: `${Math.max(10, Math.floor(size * 0.35))}px`,
+              fontWeight: 700,
+              color: "var(--text-secondary)",
+            }}
+          >
+            {initialsOf(name)}
+          </span>
+        )
       ) : (
         <img
           src={`${import.meta.env.BASE_URL}providers/${asset.file}.${asset.ext}`}

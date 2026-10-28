@@ -13,6 +13,7 @@ import type { PreparedProxyRequest } from "../request/preparer";
 import { normalizeThinkingConfig } from "../translation/thinking";
 import { compressRequest } from "../request/rtk/compress-request";
 import { applyPersona } from "../request/persona";
+import { applyPromptInjections, selectPromptInjections } from "../request/prompt-injection";
 import { activePersonaReaderFor } from "../../console/domains/personas/resolver";
 import { preferencesReaderFor } from "./attempt-finalize";
 
@@ -82,6 +83,18 @@ export async function applyTenantPreferences(
         if (personaText !== null) {
           const next = applyPersona(canonicalRequest, personaText);
           if (next !== canonicalRequest) canonicalRequest = next;
+        }
+      }
+
+      // Prompt Injections (9Router Pro parity):
+      if (prefs.promptInjections) {
+        const matchingInjections = selectPromptInjections(prefs.promptInjections, {
+          apiKeyId: prepared.authorization.id ?? null,
+          requestedModel: canonicalRequest.model ?? null,
+          resolvedModel: prepared.candidate.model_id ?? null,
+        });
+        if (matchingInjections.length > 0) {
+          canonicalRequest = applyPromptInjections(canonicalRequest, matchingInjections);
         }
       }
     }
