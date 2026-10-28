@@ -8,7 +8,6 @@ import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { CartethyiaDatabase } from "../../persistence/postgres";
 import { models, providerAccounts, providers } from "../../persistence/schema";
 import type { CanonicalEvent, CanonicalRequest, WireFamily } from "../../transport/canonical-model";
-import { WIRE_FAMILIES } from "../../transport/canonical-model";
 import { isRecord } from "../../protocol/primitives";
 import type { FetchLike } from "../quota/quota-contracts";
 import type { CompatibilityProfile } from "../provider-metadata";
@@ -112,6 +111,7 @@ export function createProviderProbingServiceForTests(deps: ProviderProbingTestDe
       chat: "/v1/chat/completions",
       responses: "/v1/responses",
       messages: "/v1/messages",
+      gemini: "/v1beta/models",
     },
     bundledModelCatalog: deps.bundledModelCatalog ?? new Map(),
     outboundFetchFor:
@@ -547,9 +547,10 @@ export class ProviderProbingService {
   ): Promise<ByokConnectionTestResult> {
     const startedAt = Date.now();
     const requestedWire = request.wireFamily;
-    const wireFamily: WireFamily = (WIRE_FAMILIES as readonly string[]).includes(requestedWire)
-      ? (requestedWire as WireFamily)
-      : "chat";
+    const wireFamily: WireFamily =
+      requestedWire === "chat" || requestedWire === "responses" || requestedWire === "messages"
+        ? requestedWire
+        : "chat";
     const url = modelListUrl(request.baseUrl);
     const outbound = asOutboundBinding(await this.outboundFetchFor(tenantId));
     const probeFetch = createProbeFetch(outbound.fetch);

@@ -13,7 +13,7 @@ import type { TelemetryBatchBuffer } from "../../../observability/telemetry-buff
 import { gatewayErrorSql } from "../../../observability/telemetry-status";
 import type { BundledProviderCatalog } from "../../../providers/operations/provider-catalog-service";
 import type { AccountInflightReading, ByokConnectionTestRequest, ByokConnectionTestResult, CreateProviderAccountRequest, CredentialMode, ModelCatalogEntry, ProbeAllAccountsResult, ProbeAllModelsResult, ProbeModelRequest, ProbeModelResult, ProviderAccountResponse, ProviderAccountTokenUsage, ProviderCatalogStore, ProviderRecord, SetModelEnabledRequest, UpdateProviderAccountRequest } from "./contracts";
-import { validateCompatibilityProfile } from "./contracts";
+import { isGenericWireFamily, validateCompatibilityProfile } from "./contracts";
 import { ProviderProbingService, type ProbeOutboundResolver } from "../../../providers/discovery/probing-service";
 import { resolveManualModelMetadata } from "../../../providers/model-definition";
 import { isUniqueViolation } from "../../../persistence/postgres";
@@ -464,7 +464,15 @@ export class DrizzleProviderCatalogStore implements ProviderCatalogStore {
     if (!owner[0]) {
       throw new ConsoleDomainError("provider_not_found", 404, `Provider ${providerId} not found`);
     }
-    const family = (wireFamily ?? "chat") as WireFamily;
+    const requestedFamily = wireFamily ?? "chat";
+    if (!isGenericWireFamily(requestedFamily)) {
+      throw new ConsoleDomainError(
+        "invalid_wire_family",
+        400,
+        "wireFamily must be one of chat, responses, messages",
+      );
+    }
+    const family: WireFamily = requestedFamily;
     // Static endpoint from the provider's own bundled catalog via the probing
     // service (the same startup-built map this store is constructed with).
     // Without this, bundled providers on versioned bases (cline) get the

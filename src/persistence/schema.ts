@@ -83,7 +83,7 @@ export const credentialKind = pgEnum("credential_kind", ["api_key", "oauth", "no
 
 // Shared wire-family domain used by providers.wire_family_default and
 // models.wire_family.
-export const wireFamily = pgEnum("wire_family", ["chat", "responses", "messages"]);
+export const wireFamily = pgEnum("wire_family", ["chat", "responses", "messages", "gemini"]);
 
 // `bridge` is a carte-bridge instance dialed as an application relay (or a
 // CONNECT tunnel where the runtime holds a socket) rather than an RFC proxy.

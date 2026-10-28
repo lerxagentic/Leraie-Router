@@ -112,9 +112,13 @@ const NATIVE_HEADER_REQUEST: CanonicalRequest = {
 export interface OpenAICompatibleAdapterConfig {
   readonly provider_id: ProviderId;
   readonly base_url: string;
+  /** Per-account dynamic upstream origin (region/residency encoded in credential). */
+  readonly resolveBaseUrl?: (context: ProviderDispatchContext) => string | undefined;
   readonly authentication_header_shape: AuthHeaderShape;
   readonly endpoint_paths_by_wire_family?: Partial<Record<WireFamily, string>>;
   readonly extra_headers?: Readonly<Record<string, string>>;
+  /** Provider-owned headers account custom configuration may never replace. */
+  readonly custom_header_extra_protected?: readonly string[];
   readonly extra_query_params?: Readonly<Record<string, string>>;
   readonly streaming_usage_mode?: "include_usage" | "none";
   readonly structured_output?: { readonly mode: "json_object" | "json_schema"; readonly enabled: boolean; readonly schema?: Record<string, unknown> };
@@ -241,7 +245,13 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
       // serving the stale pinned fallback on the first dispatch.
       Object.assign(headers, await this.config.buildExtraHeaders(context, request, candidate));
     }
-    Object.assign(headers, filterProviderCustomHeaders(context.credential.custom_headers));
+    Object.assign(
+      headers,
+      filterProviderCustomHeaders(
+        context.credential.custom_headers,
+        this.config.custom_header_extra_protected,
+      ),
+    );
     applyRouteUserAgent(headers, context.credential, context.user_agent);
     return headers;
   }
@@ -309,7 +319,8 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
       candidate?.endpoint_path && candidate.endpoint_path.length > 0
         ? candidate.endpoint_path
         : resolveEndpoint(wireFamily, this.config.endpoint_paths_by_wire_family);
-    const baseEndpointUrl = joinUrl(this.config.base_url, endpointPath);
+    const baseUrl = this.config.resolveBaseUrl?.(context) ?? this.config.base_url;
+    const baseEndpointUrl = joinUrl(baseUrl, endpointPath);
     const fetchUrl = (() => {
       if (!this.config.extra_query_params || Object.keys(this.config.extra_query_params).length === 0)
         return baseEndpointUrl;
@@ -352,7 +363,8 @@ export class OpenAICompatibleAdapter extends BaseProviderAdapter {
       candidate.endpoint_path && candidate.endpoint_path.length > 0
         ? candidate.endpoint_path
         : "/v1/systemone";
-    const fetchUrl = joinUrl(this.config.base_url, endpointPath);
+    const baseUrl = this.config.resolveBaseUrl?.(context) ?? this.config.base_url;
+    const fetchUrl = joinUrl(baseUrl, endpointPath);
     const outboundFetch = context.outbound_fetch ?? this.config.fetch ?? globalThis.fetch;
     const upstream = await postUpstreamJson(fetchUrl, headers, body, context, outboundFetch);
     upstream.release();

@@ -30,6 +30,7 @@ import {
 import type { AccountHealthEventRecord } from "../../../providers/operations/account-health-service";
 import { CREDENTIAL_MODES, PROVIDER_READ_SCOPES, PROVIDER_WRITE_SCOPES } from "./contracts";
 import {
+  isGenericWireFamily,
   isWireFamily,
   validateCompatibilityProfile,
   type CreateProviderAccountRequest,
@@ -253,7 +254,7 @@ export function createProviderCatalogOperations(config: ProviderCatalogConfig) {
             );
           }
         }
-        if (request.wireFamily !== undefined && !isWireFamily(request.wireFamily)) {
+        if (request.wireFamily !== undefined && !isGenericWireFamily(request.wireFamily)) {
           throw new ConsoleDomainError(
             "invalid_wire_family",
             400,
@@ -278,7 +279,7 @@ export function createProviderCatalogOperations(config: ProviderCatalogConfig) {
           // The operator's chosen wire family is what the BYOK adapter derives
           // its supported families and credential header shape from; dropping
           // it here silently made every custom provider an OpenAI-compatible one.
-          ...(request.wireFamily === undefined || !isWireFamily(request.wireFamily)
+          ...(request.wireFamily === undefined || !isGenericWireFamily(request.wireFamily)
             ? {}
             : { wireFamilyDefault: request.wireFamily }),
           ...(request.compatibilityProfile === undefined

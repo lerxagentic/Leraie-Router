@@ -67,10 +67,18 @@ const VALID_WIRE_FAMILIES: Record<WireFamily, true> = {
   chat: true,
   responses: true,
   messages: true,
+  gemini: true,
 };
 
 export function isWireFamily(value: unknown): value is WireFamily {
   return typeof value === "string" && value in VALID_WIRE_FAMILIES;
+}
+
+/** Wires served by the generic BYOK adapter; Gemini is Factory's bespoke transport. */
+export function isGenericWireFamily(
+  value: unknown,
+): value is Exclude<WireFamily, "gemini"> {
+  return value === "chat" || value === "responses" || value === "messages";
 }
 
 /**
@@ -171,7 +179,7 @@ export function validateCompatibilityProfile(profile: CompatibilityProfile): voi
   }
   if (profile.endpoint_paths_by_wire_family) {
     for (const [wf, path] of Object.entries(profile.endpoint_paths_by_wire_family)) {
-      if (!isWireFamily(wf)) {
+      if (!isGenericWireFamily(wf)) {
         throw new GatewayError(
           "invalid_request",
           400,
@@ -236,7 +244,7 @@ export function validateCompatibilityProfile(profile: CompatibilityProfile): voi
           `model_wire_families[].pattern ${rule.pattern} is not a valid regular expression`,
         );
       }
-      if (!isWireFamily(rule.wire_family)) {
+      if (!isGenericWireFamily(rule.wire_family)) {
         throw new GatewayError(
           "invalid_request",
           400,

@@ -124,6 +124,8 @@ const MODELS_DEV_PROVIDER_IDS: Readonly<Record<string, string>> = {
   ollamacloud: "ollama-cloud",
   xiaomipg: "xiaomi-token-plan-sgp",
   xiaomitp: "xiaomi-token-plan-cn",
+  alibabacp: "alibaba-token-plan",
+  dashscope: "alibaba-coding-plan-cn",
   // Cartethyia ids that are shorter than the name models.dev files the provider
   // under. Without these the exact lookup misses for every model, and each row
   // falls through to the bare lookup — which fails closed when providers

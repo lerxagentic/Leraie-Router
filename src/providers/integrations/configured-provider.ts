@@ -36,10 +36,14 @@ export interface ApiKeyProviderSpec {
    * from the bundled metadata (Cline, Grok Build, …) set it explicitly.
    */
   readonly base_url?: string;
+  /** Resolve a region/account-specific origin from the current dispatch context. */
+  readonly resolveBaseUrl?: (context: ProviderDispatchContext) => string | undefined;
   /** Endpoint path per wire family; families absent here fall back to `BUILTIN_DEFAULT_ENDPOINTS`. */
   readonly endpoint_paths_by_wire_family?: Partial<Record<WireFamily, string>>;
   /** Static headers applied to every dispatch, before `buildExtraHeaders`. */
   readonly extra_headers?: Readonly<Record<string, string>>;
+  /** Provider-owned header names custom account headers may not replace. */
+  readonly custom_header_extra_protected?: readonly string[];
   /** Per-dispatch header hook for providers needing fresh values (correlation IDs, credential-derived auth). */
   readonly buildExtraHeaders?: (
     context: ProviderDispatchContext,
@@ -79,8 +83,12 @@ export function createApiKeyAdapter(
     withBearerAuthentication({
       provider_id: spec.provider_id,
       base_url: spec.base_url ?? providerBaseUrl(spec.provider_id),
+      ...(spec.resolveBaseUrl ? { resolveBaseUrl: spec.resolveBaseUrl } : {}),
       endpoint_paths_by_wire_family: spec.endpoint_paths_by_wire_family ?? {},
       ...(spec.extra_headers ? { extra_headers: spec.extra_headers } : {}),
+      ...(spec.custom_header_extra_protected
+        ? { custom_header_extra_protected: spec.custom_header_extra_protected }
+        : {}),
       ...(spec.buildExtraHeaders ? { buildExtraHeaders: spec.buildExtraHeaders } : {}),
       ...(spec.credential_forwarding ? { credential_forwarding: spec.credential_forwarding } : {}),
       ...(spec.promptCache === false ? { supports_prompt_caching: false } : {}),

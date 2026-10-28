@@ -127,6 +127,7 @@ export interface ModelHelperRow {
 function defaultEndpoint(wireFamily: ModelDefinition["wireFamily"]): string {
   if (wireFamily === "chat") return "/chat/completions";
   if (wireFamily === "responses") return "/responses";
+  if (wireFamily === "gemini") return "/v1beta/models";
   return "/messages";
 }
 

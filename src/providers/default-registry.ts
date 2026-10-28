@@ -501,6 +501,42 @@ export const PROVIDER_CAPABILITIES = {
     loadAdapter: async () => (await import("./integrations/perplexity")).createPerplexityAdapter(),
     loadModels: async () => (await import("./integrations/perplexity")).PERPLEXITY_MODELS,
   },
+  factory: {
+    loadAdapter: async () => (await import("./integrations/factory/factory")).factoryAdapter,
+    loadModels: async () => (await import("./integrations/factory/factory-models")).FACTORY_MODELS,
+    loadAuthentication: oauthCapability(
+      () => import("./integrations/factory/factory-oauth"),
+      "factoryOAuthClient",
+      { withRefresher: true },
+    ),
+  },
+  cloudflareai: {
+    loadAdapter: async () =>
+      (await import("./integrations/cloudflareai/cloudflareai")).cloudflareaiAdapter,
+    loadAuthentication: oauthCapability(
+      () => import("./integrations/cloudflareai/cloudflareai-oauth"),
+      "cloudflareaiOAuthClient",
+    ),
+    loadModels: async () =>
+      (await import("./integrations/cloudflareai/cloudflareai-models")).CLOUDFLAREAI_MODELS,
+  },
+  alibabacp: {
+    loadAdapter: async () =>
+      (await import("./integrations/alibabacp/alibabacp")).alibabacpAdapter,
+    loadAuthentication: oauthCapability(
+      () => import("./integrations/alibabacp/alibabacp-oauth"),
+      "alibabacpOAuthClient",
+    ),
+    loadModels: async () =>
+      (await import("./integrations/alibabacp/alibabacp-models")).ALIBABACP_MODELS,
+  },
+  dashscope: {
+    loadAdapter: async () => createApiKeyAdapter(GENERIC_API_KEY_SPECS.dashscope),
+    loadModels: async () => (await import("./integrations/dashscope-models")).DASHSCOPE_MODELS,
+    loadModelDiscovery: openAIModelDiscovery("dashscope", {
+      headers: (credential) => ({ authorization: `Bearer ${credential}` }),
+    }),
+  },
   // Web-search providers: a `createSearchAdapter` over their spec, and a single
   // `serviceKind: "websearch"` catalog row served by the `/v1/search` route.
   exa: {

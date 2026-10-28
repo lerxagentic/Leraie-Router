@@ -18,6 +18,7 @@ export const GENERIC_API_KEY_PROVIDER_IDS = [
   "ollamacloud",
   // Bare root: the `/v1`-prefixed paths stay pinned.
   "deepseek",
+  "dashscope",
 ] as const;
 
 type GenericApiKeyProviderId = (typeof GENERIC_API_KEY_PROVIDER_IDS)[number];
@@ -40,4 +41,5 @@ export const GENERIC_API_KEY_SPECS = {
   gmi: genericApiKeySpec("gmi"),
   ollamacloud: genericApiKeySpec("ollamacloud"),
   deepseek: genericApiKeySpec("deepseek"),
+  dashscope: genericApiKeySpec("dashscope"),
 } satisfies Readonly<Record<GenericApiKeyProviderId, ApiKeyProviderSpec>>;

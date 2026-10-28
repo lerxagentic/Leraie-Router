@@ -201,6 +201,30 @@ const RAW_BUNDLED_PROVIDER_METADATA = [
     credentialUrl: "https://github.com/settings/copilot",
   },
   { id: "perplexity", displayName: "Perplexity", baseUrl: "https://api.perplexity.ai", credentialUrl: "https://www.perplexity.ai/settings/api" },
+  {
+    id: "factory",
+    displayName: "Factory Droid",
+    baseUrl: "https://api.factory.ai",
+    credentialUrl: "https://app.factory.ai",
+  },
+  {
+    id: "cloudflareai",
+    displayName: "Cloudflare AI Gateway",
+    baseUrl: "https://gateway.ai.cloudflare.com",
+    credentialUrl: "https://dash.cloudflare.com/ai-gateway",
+  },
+  {
+    id: "dashscope",
+    displayName: "Alibaba DashScope",
+    baseUrl: "https://coding.dashscope.aliyuncs.com/v1",
+    credentialUrl: "https://bailian.console.aliyun.com/?apiKey=1",
+  },
+  {
+    id: "alibabacp",
+    displayName: "Alibaba Coding Plan",
+    baseUrl: "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+    credentialUrl: "https://bailian.console.aliyun.com/",
+  },
   // Web-search providers: their catalog carries a single `serviceKind:
   // "websearch"` model, served by the `/v1/search` native route rather than a
   // chat wire. `baseUrl` is the API origin the search spec builds requests from.

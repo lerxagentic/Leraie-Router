@@ -307,7 +307,7 @@ export async function resolveProbeTarget(args: {
       endpointPath = endpointForFamily(wireFamily);
     }
   }
-  const sourceSurface: SourceSurface = wireFamily;
+  const sourceSurface: SourceSurface = wireFamily === "gemini" ? "chat" : wireFamily;
   // Built from the row the probe resolves to, so the adapter's capability gate
   // sees the same profile live traffic would. `providerId` is part of the
   // profile because a bespoke-wire provider has no canonical codec and must not

@@ -63,17 +63,27 @@ export function responseParts(parts: readonly Record<string, unknown>[]): {
 
 export function mapGeminiUsage(body: Record<string, unknown>): Record<string, unknown> {
   const usage = isRecord(body["usageMetadata"]) ? (body["usageMetadata"] as Record<string, unknown>) : {};
+  const prompt = nullableNumber(usage["promptTokenCount"]) ?? 0;
+  const candidates = nullableNumber(usage["candidatesTokenCount"]) ?? 0;
+  const thoughts = nullableNumber(usage["thoughtsTokenCount"]) ?? 0;
+  const output = candidates + thoughts;
+  const cached = nullableNumber(usage["cachedContentTokenCount"]) ?? 0;
   return {
-    input_tokens: nullableNumber(usage["promptTokenCount"]) ?? 0,
-    output_tokens: nullableNumber(usage["candidatesTokenCount"]) ?? 0,
-    total_tokens: nullableNumber(usage["totalTokenCount"]) ?? 0,
-    cached_tokens: nullableNumber(usage["cachedContentTokenCount"]) ?? 0,
+    input_tokens: prompt,
+    output_tokens: output,
+    total_tokens: nullableNumber(usage["totalTokenCount"]) ?? prompt + output,
+    cached_tokens: cached,
+    ...(thoughts > 0
+      ? { output_tokens_details: { reasoning_tokens: thoughts } }
+      : {}),
   };
 }
 
 export function toCanonicalStopReason(candidate: Record<string, unknown>, calls: number): CanonicalStopReason {
   if (calls > 0) return "tool_use";
-  if (candidate["finishReason"] === "MAX_TOKENS") return "length";
+  const finishReason = candidate["finishReason"];
+  if (finishReason === "MAX_TOKENS") return "length";
+  if (finishReason === "SAFETY" || finishReason === "RECITATION") return "content_filter";
   return "stop";
 }
 
