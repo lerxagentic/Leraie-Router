@@ -70,11 +70,12 @@ export async function executeOpencodeCli(
   signal?: AbortSignal,
 ): Promise<string> {
   const cliArgs = ["run", "--model", targetModel, "--format", "default"];
+  const homeDir = process.env.DATA_DIR || "/tmp/opencode-home";
   return new Promise((resolve, reject) => {
     let stdoutText = "";
     let stderrText = "";
     const child = spawn(executable, cliArgs, {
-      env: { ...process.env, NO_PROXY: "127.0.0.1,localhost,::1" },
+      env: { ...process.env, HOME: homeDir, NO_PROXY: "127.0.0.1,localhost,::1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
 

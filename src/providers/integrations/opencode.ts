@@ -245,7 +245,7 @@ export class OpenCodeFreeAdapter extends OpenAICompatibleAdapter {
   ): Promise<Response> {
     const opencodeBin = findOpencodeBinary();
     const rawModel = candidate?.model_id ?? "mimo-v2.6-flash-free";
-    const targetModel = `opencode/${rawModel.replace(/-free$/, "")}`;
+    const targetModel = `opencode/${rawModel}`;
 
     // If official CLI binary is installed, try CLI first for chat models to avoid 429 FreeUsageLimitError
     if (opencodeBin && candidate?.wire_family === "chat") {
@@ -253,7 +253,7 @@ export class OpenCodeFreeAdapter extends OpenAICompatibleAdapter {
         const prompt = formatOpencodeCliPrompt(request, payload);
         const text = await executeOpencodeCli(opencodeBin, targetModel, prompt, context.abort_signal);
         return wrapTextAsSseResponse(text, rawModel);
-      } catch {
+      } catch (cliErr) {
         // Fall back to HTTP wire
       }
     }
