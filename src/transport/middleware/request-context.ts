@@ -47,7 +47,7 @@ function withModelWarning(
 ): GatewayError {
   if (!(error instanceof GatewayError)) return error as GatewayError;
   const model = String(error.details.model ?? "");
-  const message = modelWarningMessage(model, outcome, limit, opts?.banTtlMs);
+  const message = modelWarningMessage(model, outcome, limit);
   const hint = opts?.allowedModels?.slice(0, 8);
   return new GatewayError(error.code, error.status, message, {
     ...error.details,

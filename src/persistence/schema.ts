@@ -964,6 +964,8 @@ export const telemetryEvents = pgTable(
     requestId: uuid("request_id").notNull(),
     sourceSurface: telemetrySourceSurface("source_surface"),
     requestedModel: text("requested_model"),
+    clientName: text("client_name"),
+    reportedModel: text("reported_model"),
     /** Canonical reasoning effort the client asked for; NULL when it asked for none. */
     requestedEffort: text("requested_effort"),
     providerId: text("provider_id"),
@@ -1200,3 +1202,24 @@ export const buddyTaskLedger = pgTable(
 
 export type BuddyTaskLedgerRow = typeof buddyTaskLedger.$inferSelect;
 export type InsertBuddyTaskLedgerRow = typeof buddyTaskLedger.$inferInsert;
+
+export const telemetryReconciliationState = pgTable(
+  "telemetry_reconciliation_state",
+  {
+    jobName: text("job_name").primaryKey(),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    fileName: text("file_name").notNull().default(""),
+    byteOffset: bigint("byte_offset", { mode: "number" }).notNull().default(0),
+    filesCompleted: bigint("files_completed", { mode: "number" }).default(0),
+    eventsExamined: bigint("events_examined", { mode: "number" }).default(0),
+    eventsInserted: bigint("events_inserted", { mode: "number" }).default(0),
+    conflicts: bigint("conflicts", { mode: "number" }).default(0),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    check("telemetry_reconciliation_state_offset_nonneg", sql`${table.byteOffset} >= 0`),
+  ],
+);
+
+export type TelemetryReconciliationState = typeof telemetryReconciliationState.$inferSelect;

@@ -4,6 +4,7 @@ import { fetchOpenAICompatibleModels } from "../discovery/openai-model-discovery
 import { providerBaseUrl } from "../provider-metadata";
 import type { DiscoveryInput } from "../discovery/discovery-types";
 import { defineModel } from "../model-definition";
+import { openrouterFreeRoster } from "../discovery/openrouter-free-roster";
 
 const OPENROUTER_PROVIDER_ID = "openrouter" as const;
 
@@ -34,6 +35,25 @@ export const OPENROUTER_MODELS: readonly ModelDefinition[] = [
     toolCall: false,
   }),
 ];
+
+export const OPENROUTER_FREE_MODELS: readonly ModelDefinition[] = openrouterFreeRoster({
+  providerId: OPENROUTER_PROVIDER_ID,
+  endpoint: "/chat/completions",
+});
+
+export async function discoverOpenrouterFreeModels(
+  input: DiscoveryInput,
+): Promise<readonly ModelDefinition[] | null> {
+  const listed = await discoverOpenrouterModels(input);
+  if (listed === null) return null;
+  return listed
+    .filter((model) => model.modelId.endsWith(":free"))
+    .map((model) => ({
+      ...model,
+      free: true,
+      freeTier: true,
+    }));
+}
 
 /** OpenRouter adapter spec; the registry builds it via `createApiKeyAdapter`. */
 export const OPENROUTER_SPEC: ApiKeyProviderSpec = {

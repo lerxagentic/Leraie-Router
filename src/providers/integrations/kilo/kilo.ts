@@ -26,6 +26,7 @@ import type {
 import type { CanonicalRequest } from "../../../transport/canonical-model";
 import { OpenAICompatibleAdapter, withBearerAuthentication } from "../../compatible-adapter";
 import { providerBaseUrl } from "../../provider-metadata";
+import { openrouterFreeRoster } from "../../discovery/openrouter-free-roster";
 import { parseKiloCredential } from "./kilo-oauth";
 
 export const KILO_PROVIDER_ID = "kilo" as const;
@@ -99,6 +100,11 @@ export const KILO_MODELS: readonly ModelDefinition[] = [
   kiloModel("z-ai/glm-5.3-flash", 1_048_576, 131_072, { vision: true, reasoning: true }),
   kiloModel("deepseek/deepseek-chat", 163_840, 16_384),
 ];
+
+export const KILO_FREE_MODELS: readonly ModelDefinition[] = openrouterFreeRoster({
+  providerId: KILO_PROVIDER_ID,
+  endpoint: KILO_ENDPOINT_PATH,
+});
 
 /**
  * Adapter that decodes the credential envelope before the shared pipeline
