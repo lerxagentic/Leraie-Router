@@ -565,7 +565,7 @@ function TotpSecurityPanel(): ReactNode {
   const [loading, setLoading] = useState(false);
 
   const load = () => {
-    void consoleRequest<TotpStatus>("/auth/totp")
+    void consoleRequest<TotpStatus>("/settings/totp")
       .then(setStatus)
       .catch(() => undefined);
   };
@@ -577,7 +577,7 @@ function TotpSecurityPanel(): ReactNode {
   const startSetup = async () => {
     setLoading(true);
     try {
-      const data = await consoleRequest<TotpSetupData>("/auth/totp", {
+      const data = await consoleRequest<TotpSetupData>("/settings/totp", {
         method: "POST",
         body: JSON.stringify({ action: "setup" }),
       });
@@ -593,7 +593,7 @@ function TotpSecurityPanel(): ReactNode {
     if (!verifyCode) return;
     setLoading(true);
     try {
-      await consoleRequest("/auth/totp", {
+      await consoleRequest("/settings/totp", {
         method: "POST",
         body: JSON.stringify({ action: "enable", code: verifyCode }),
       });
@@ -613,7 +613,7 @@ function TotpSecurityPanel(): ReactNode {
     if (!code) return;
     setLoading(true);
     try {
-      await consoleRequest("/auth/totp", {
+      await consoleRequest("/settings/totp", {
         method: "POST",
         body: JSON.stringify({ action: "disable", code }),
       });

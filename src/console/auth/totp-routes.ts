@@ -28,7 +28,7 @@ export function createTotpRoutes(
 ): Elysia<any, any, any, any, any, any, any, any> {
   const { db, accessResolver } = config;
 
-  return new Elysia({ prefix: "/auth/totp" })
+  const handler = new Elysia()
     .get("/", async ({ request }) => {
       const access = accessResolver(request);
       if (!access || !access.tenantId) {
@@ -122,4 +122,8 @@ export function createTotpRoutes(
         throw new ConsoleDomainError("invalid_request", 400, "Unknown action");
       },
     );
+
+  return new Elysia()
+    .use(new Elysia({ prefix: "/settings/totp" }).use(handler))
+    .use(new Elysia({ prefix: "/auth/totp" }).use(handler));
 }
