@@ -244,11 +244,14 @@ export async function registerByokProviders(
           provider_id: providerId,
           base_url: baseUrl,
           authentication_header_shape: wireProfile.authHeaderShape,
-          buildExtraHeaders: (_context, _request, candidate) => {
-            // Explicit gateway identity wins over CLI cloaking, and Codex /
-            // Claude-Code-shaped traffic can never take this path: this hook
-            // only runs for BYOK custom rows, never bundled first-party
-            // adapters. Unset restores the CLI headers below.
+          buildExtraHeaders: (context, _request, candidate) => {
+            const routeAgent = context.user_agent;
+            if (routeAgent !== undefined) {
+              return {
+                ...(routeAgent.length > 0 ? { "user-agent": routeAgent } : {}),
+                ...(compatibilityProfile?.extra_headers ?? {}),
+              };
+            }
             if (compatibilityProfile?.gateway_user_agent === true) {
               return {
                 "user-agent": GATEWAY_USER_AGENT,

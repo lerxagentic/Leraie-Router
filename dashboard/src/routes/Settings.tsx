@@ -1,4 +1,4 @@
-import { Eye, Shield, Bell, Send } from "lucide-react";
+import { Eye, Shield, Bell, Send, Zap, Database, KeyRound, Trash2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { consoleRequest } from "../data/api";
 import { Select } from "../components/ui/select";
@@ -373,6 +373,338 @@ function NotificationsPanel(): ReactNode {
   );
 }
 
+interface CacheStats {
+  enabled: boolean;
+  stats: { size: number; hits: number; misses: number };
+}
+
+function ResponseCachePanel(): ReactNode {
+  const [data, setData] = useState<CacheStats | null>(null);
+  const [clearing, setClearing] = useState(false);
+
+  const load = () => {
+    void consoleRequest<CacheStats>("/settings/cache")
+      .then(setData)
+      .catch(() => undefined);
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const clearCache = async () => {
+    setClearing(true);
+    try {
+      await consoleRequest("/settings/cache/clear", { method: "POST" });
+      toast.success("Response cache cleared");
+      load();
+    } catch {
+      toast.error("Failed to clear cache");
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  const total = (data?.stats.hits ?? 0) + (data?.stats.misses ?? 0);
+  const hitRate = total > 0 ? (((data?.stats.hits ?? 0) / total) * 100).toFixed(1) : "0.0";
+
+  return (
+    <Card>
+      <CardHeader
+        title="Response Cache"
+        subtitle="Exact replays for identical non-streaming completions. Serves instant 0ms responses without using upstream token quota."
+        icon={<Zap size={16} />}
+      />
+      <CardBody>
+        <Stack gap="14px">
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+              gap: "10px",
+            }}
+          >
+            <div style={{ padding: "8px 12px", borderRadius: "8px", background: "var(--surface-hover)" }}>
+              <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>Cached Entries</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+                {data?.stats.size ?? 0}
+              </div>
+            </div>
+            <div style={{ padding: "8px 12px", borderRadius: "8px", background: "var(--surface-hover)" }}>
+              <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>Cache Hits</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--green)", fontFamily: "var(--font-mono)" }}>
+                {data?.stats.hits ?? 0}
+              </div>
+            </div>
+            <div style={{ padding: "8px 12px", borderRadius: "8px", background: "var(--surface-hover)" }}>
+              <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>Cache Misses</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--text-secondary)", fontFamily: "var(--font-mono)" }}>
+                {data?.stats.misses ?? 0}
+              </div>
+            </div>
+            <div style={{ padding: "8px 12px", borderRadius: "8px", background: "var(--surface-hover)" }}>
+              <div style={{ fontSize: "11px", color: "var(--text-tertiary)" }}>Hit Rate</div>
+              <div style={{ fontSize: "18px", fontWeight: 700, color: "var(--accent)", fontFamily: "var(--font-mono)" }}>
+                {hitRate}%
+              </div>
+            </div>
+          </div>
+          <Inline gap="8px">
+            <Button variant="secondary" size="sm" disabled={clearing} onClick={clearCache}>
+              <Trash2 size={13} style={{ marginRight: "6px" }} />
+              {clearing ? "Clearing…" : "Clear Cache"}
+            </Button>
+          </Inline>
+        </Stack>
+      </CardBody>
+    </Card>
+  );
+}
+
+interface MaintenanceStatus {
+  config: {
+    enabled: boolean;
+    retentionDays: number;
+    lastRunAt: string | null;
+    lastResult: {
+      cutoff: string;
+      prunedTelemetry: number;
+      prunedCache: number;
+      vacuum: string;
+      ranAt: string;
+    } | null;
+  };
+}
+
+function DatabaseMaintenancePanel(): ReactNode {
+  const [retentionDays, setRetentionDays] = useState(90);
+  const [lastResult, setLastResult] = useState<MaintenanceStatus["config"]["lastResult"]>(null);
+  const [running, setRunning] = useState(false);
+
+  useEffect(() => {
+    void consoleRequest<MaintenanceStatus>("/settings/maintenance")
+      .then((res) => {
+        if (res.config.retentionDays) setRetentionDays(res.config.retentionDays);
+        if (res.config.lastResult) setLastResult(res.config.lastResult);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const runNow = async () => {
+    setRunning(true);
+    try {
+      const res = await consoleRequest<{ result: NonNullable<MaintenanceStatus["config"]["lastResult"]> }>(
+        "/settings/maintenance",
+        {
+          method: "POST",
+          body: JSON.stringify({ retentionDays: Number(retentionDays) }),
+        },
+      );
+      setLastResult(res.result);
+      toast.success(
+        `Maintenance complete: pruned ${res.result.prunedTelemetry} telemetry events (vacuum: ${res.result.vacuum})`,
+      );
+    } catch {
+      toast.error("Failed to run maintenance");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title="Database Maintenance & Pruning"
+        subtitle="Prune per-request telemetry history older than retention days to reclaim disk space. Quota and rollup aggregates remain preserved."
+        icon={<Database size={16} />}
+      />
+      <CardBody>
+        <Stack gap="14px">
+          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+            <label style={{ fontSize: "13px", fontWeight: 600 }}>Retention Period (Days):</label>
+            <Input
+              type="number"
+              style={{ width: "90px" }}
+              value={retentionDays}
+              onChange={(e) => setRetentionDays(Number(e.target.value))}
+            />
+          </div>
+          {lastResult && (
+            <div style={{ fontSize: "12px", color: "var(--text-tertiary)", background: "var(--surface-hover)", padding: "8px 12px", borderRadius: "8px" }}>
+              Last executed: <b>{new Date(lastResult.ranAt).toLocaleString()}</b> · Pruned{" "}
+              <b>{lastResult.prunedTelemetry}</b> events · Vacuum: <b>{lastResult.vacuum}</b>
+            </div>
+          )}
+          <Inline gap="8px">
+            <Button variant="primary" size="sm" disabled={running} onClick={runNow}>
+              {running ? "Running…" : "Run Maintenance Now"}
+            </Button>
+          </Inline>
+        </Stack>
+      </CardBody>
+    </Card>
+  );
+}
+
+interface TotpStatus {
+  enabled: boolean;
+  backupCodesRemaining: number;
+  hasPendingSetup: boolean;
+}
+
+interface TotpSetupData {
+  secret: string;
+  otpauthUrl: string;
+  backupCodes: string[];
+}
+
+function TotpSecurityPanel(): ReactNode {
+  const [status, setStatus] = useState<TotpStatus | null>(null);
+  const [setupData, setSetupData] = useState<TotpSetupData | null>(null);
+  const [verifyCode, setVerifyCode] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const load = () => {
+    void consoleRequest<TotpStatus>("/auth/totp")
+      .then(setStatus)
+      .catch(() => undefined);
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const startSetup = async () => {
+    setLoading(true);
+    try {
+      const data = await consoleRequest<TotpSetupData>("/auth/totp", {
+        method: "POST",
+        body: JSON.stringify({ action: "setup" }),
+      });
+      setSetupData(data);
+    } catch {
+      toast.error("Failed to start 2FA setup");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const enable = async () => {
+    if (!verifyCode) return;
+    setLoading(true);
+    try {
+      await consoleRequest("/auth/totp", {
+        method: "POST",
+        body: JSON.stringify({ action: "enable", code: verifyCode }),
+      });
+      toast.success("Two-factor authentication enabled successfully!");
+      setSetupData(null);
+      setVerifyCode("");
+      load();
+    } catch {
+      toast.error("Invalid authenticator code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const disable = async () => {
+    const code = prompt("Enter 6-digit authenticator code or a backup code to disable 2FA:");
+    if (!code) return;
+    setLoading(true);
+    try {
+      await consoleRequest("/auth/totp", {
+        method: "POST",
+        body: JSON.stringify({ action: "disable", code }),
+      });
+      toast.success("Two-factor authentication disabled");
+      load();
+    } catch {
+      toast.error("Invalid code");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader
+        title="Two-Factor Authentication (2FA / TOTP)"
+        subtitle="Protect console admin access with Google Authenticator, Aegis, or 1Password."
+        icon={<KeyRound size={16} />}
+      />
+      <CardBody>
+        <Stack gap="14px">
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <span style={{ fontSize: "13px" }}>Status:</span>
+            <span
+              style={{
+                fontSize: "12px",
+                fontWeight: 600,
+                padding: "2px 8px",
+                borderRadius: "12px",
+                background: status?.enabled ? "var(--green-subtle, rgba(34, 197, 94, 0.15))" : "var(--surface-hover)",
+                color: status?.enabled ? "var(--green)" : "var(--text-tertiary)",
+              }}
+            >
+              {status?.enabled ? `Active (${status.backupCodesRemaining} backup codes left)` : "Disabled"}
+            </span>
+          </div>
+
+          {!status?.enabled && !setupData && (
+            <Inline gap="8px">
+              <Button variant="primary" size="sm" disabled={loading} onClick={startSetup}>
+                {loading ? "Starting…" : "Set Up 2FA"}
+              </Button>
+            </Inline>
+          )}
+
+          {!status?.enabled && setupData && (
+            <Stack gap="12px" style={{ background: "var(--surface-hover)", padding: "12px", borderRadius: "8px" }}>
+              <div style={{ fontSize: "12.5px" }}>
+                1. Add this secret key to your authenticator app:
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: "13px", padding: "6px 8px", background: "var(--surface)", borderRadius: "6px", margin: "6px 0", wordBreak: "break-all" }}>
+                  {setupData.secret}
+                </div>
+              </div>
+              <div style={{ fontSize: "12.5px" }}>
+                2. Save these one-time recovery backup codes:
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px", fontFamily: "var(--font-mono)", fontSize: "11px", margin: "6px 0" }}>
+                  {setupData.backupCodes.map((c) => (
+                    <span key={c} style={{ background: "var(--surface)", padding: "4px 6px", borderRadius: "4px" }}>{c}</span>
+                  ))}
+                </div>
+              </div>
+              <div style={{ fontSize: "12.5px" }}>
+                3. Enter the 6-digit verification code from your app:
+                <div style={{ display: "flex", gap: "8px", marginTop: "6px" }}>
+                  <Input
+                    placeholder="123456"
+                    value={verifyCode}
+                    onChange={(e) => setVerifyCode(e.target.value)}
+                    style={{ width: "120px", fontFamily: "var(--font-mono)", textAlign: "center" }}
+                  />
+                  <Button variant="primary" size="sm" disabled={loading || !verifyCode} onClick={enable}>
+                    Confirm & Enable 2FA
+                  </Button>
+                </div>
+              </div>
+            </Stack>
+          )}
+
+          {status?.enabled && (
+            <Inline gap="8px">
+              <Button variant="secondary" size="sm" disabled={loading} onClick={disable}>
+                Disable 2FA
+              </Button>
+            </Inline>
+          )}
+        </Stack>
+      </CardBody>
+    </Card>
+  );
+}
+
 export default function Settings(): ReactNode {
   return (
     <div className="settings-column">
@@ -388,8 +720,17 @@ export default function Settings(): ReactNode {
         </CardBody>
       </Card>
 
+      {/* 2FA / TOTP */}
+      <TotpSecurityPanel />
+
       {/* Outbound Alerts */}
       <NotificationsPanel />
+
+      {/* Response Cache */}
+      <ResponseCachePanel />
+
+      {/* Database Maintenance */}
+      <DatabaseMaintenancePanel />
 
       {/* Privacy */}
       <PrivacyPanel />

@@ -143,14 +143,18 @@ export function buildCapabilityProfile(row: {
   };
 }
 
-/** Resolves route identity only for bundled adapters without a native User-Agent builder. */
+/** Resolves route identity: bundled adapters without a native User-Agent builder, plus custom providers. */
 export function resolveRouteUserAgent(
   providerId: string,
   tenantUserAgent: string | undefined,
   globalUserAgent: string | undefined,
 ): string | undefined {
-  if (!isBundledProviderId(providerId) || providerHasAdapterUserAgent(providerId)) return undefined;
-  return resolveTenantOverride(tenantUserAgent, globalUserAgent, DEFAULT_PROVIDER_USER_AGENT);
+  if (isBundledProviderId(providerId)) {
+    if (providerHasAdapterUserAgent(providerId)) return undefined;
+    return resolveTenantOverride(tenantUserAgent, globalUserAgent, DEFAULT_PROVIDER_USER_AGENT);
+  }
+  const selected = resolveTenantOverride(tenantUserAgent, globalUserAgent, undefined);
+  return selected === undefined ? undefined : selected.trim();
 }
 
 /** One persisted model row ready for candidate construction. */

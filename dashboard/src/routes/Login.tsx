@@ -11,6 +11,7 @@ interface LoginResult {
   readonly status: "success" | "failed";
   readonly message?: string;
   readonly requires_setup?: boolean;
+  readonly requires_totp?: boolean;
 }
 
 function safeReturnPath(value: string | null): string {
@@ -23,6 +24,8 @@ export default function Login(): ReactNode {
   const [params] = useSearchParams();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  const [requiresTotp, setRequiresTotp] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [checkingSetup, setCheckingSetup] = useState(true);
@@ -53,11 +56,20 @@ export default function Login(): ReactNode {
     try {
       const result = await consoleRequest<LoginResult>("/auth/login", {
         method: "POST",
-        body: JSON.stringify({ username: username.trim(), password }),
+        body: JSON.stringify({
+          username: username.trim(),
+          password,
+          ...(totpCode ? { totp_code: totpCode.trim() } : {}),
+        }),
       });
       if (result.status !== "success") {
         if (result.requires_setup) {
           navigate("/setup", { replace: true });
+          return;
+        }
+        if (result.requires_totp) {
+          setRequiresTotp(true);
+          setError(result.message ?? "Enter 6-digit authenticator or backup code.");
           return;
         }
         setError(result.message ?? "Authentication failed. Please check your credentials.");
@@ -131,6 +143,18 @@ export default function Login(): ReactNode {
             required
             autoComplete="current-password"
           />
+
+          {requiresTotp && (
+            <Input
+              label="2FA Authenticator Code or Backup Code"
+              id="login-totp"
+              value={totpCode}
+              onChange={(e) => setTotpCode(e.target.value)}
+              required
+              placeholder="123456 or XXXX-XXXX"
+              autoFocus
+            />
+          )}
 
           {error ? (
             <div

@@ -35,3 +35,41 @@ export function sortCandidatesByLru<T extends { provider_account_id?: string | n
     return aTime - bTime;
   });
 }
+
+/** Sticky-random current account per route (9Router Pro parity). */
+const stickyAccountByRoute = new Map<string, string>();
+
+/** Clears the sticky lock for a route (called when the sticky account fails or locks). */
+export function clearStickyAccount(routeKey: string): void {
+  stickyAccountByRoute.delete(routeKey);
+}
+
+/** Resets all sticky account locks. */
+export function resetAllStickyAccounts(): void {
+  stickyAccountByRoute.clear();
+}
+
+/**
+ * Reorders candidates with Sticky-Random strategy (9Router Pro parity).
+ *
+ * Keeps using the current working account to maximize Prompt Cache hit rate;
+ * when the account fails or becomes unavailable, re-rolls randomly across the
+ * remaining available accounts.
+ */
+export function applyStickyRandomOrder<T extends { provider_account_id?: string | null }>(
+  candidates: readonly T[],
+  routeKey: string,
+): T[] {
+  if (candidates.length <= 1) return [...candidates];
+  const stickyId = stickyAccountByRoute.get(routeKey);
+  const current = stickyId ? candidates.find((c) => c.provider_account_id === stickyId) : undefined;
+  if (current) {
+    return [current, ...candidates.filter((c) => c !== current)];
+  }
+  const pickIndex = Math.floor(Math.random() * candidates.length);
+  const picked = candidates[pickIndex]!;
+  if (picked.provider_account_id) {
+    stickyAccountByRoute.set(routeKey, picked.provider_account_id);
+  }
+  return [picked, ...candidates.filter((c) => c !== picked)];
+}

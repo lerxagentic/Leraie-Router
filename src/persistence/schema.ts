@@ -877,6 +877,30 @@ export interface ConsoleSettingsPreferences {
    */
   promptInjections?: import("../transport/request/prompt-injection").PromptInjectionStoreData;
   /**
+   * Outbound alert notifications configuration (Telegram & Webhook).
+   */
+  notifications?: import("../observability/notifier").NotificationSettings;
+  /**
+   * Database maintenance configuration (scheduled pruning & vacuum).
+   */
+  dbMaintenance?: {
+    readonly enabled?: boolean;
+    readonly retentionDays?: number;
+    readonly lastRunAt?: string | null;
+    readonly lastResult?: Record<string, unknown> | null;
+  };
+  /**
+   * Two-Factor Authentication (TOTP / 2FA) configuration.
+   */
+  totp?: {
+    readonly enabled?: boolean;
+    readonly secret?: string;
+    readonly backupHashes?: readonly string[];
+    readonly pendingSecret?: string;
+    readonly pendingBackupHashes?: readonly string[];
+    readonly createdAt?: string;
+  };
+  /**
    * Scheduled native backup delivered to a Telegram chat (mirrors 9Router's
    * auto-backup). `lastSentAt`/`lastError` are scheduler state, persisted so
    * a restart never re-sends a backup that already went out.

@@ -22,6 +22,12 @@ import type { FirstBootSetupService } from "./service";
 import { isTrustedProxyPeer, resolveClientIdentity } from "../../security/ip-boundary";
 import type { TrustedProxyBoundary } from "../../config";
 import { readSessionCookie } from "./session-resolver";
+import {
+  getTenantTotpConfig,
+  verifyTotpCode,
+  hashBackupCode,
+  saveTenantTotpConfig,
+} from "./totp";
 export interface LoginRequest {
   readonly username: string;
   readonly password: string;
@@ -33,6 +39,7 @@ export interface LoginResponse {
   readonly session_id?: never;
   readonly user_id?: string;
   readonly requires_setup?: boolean;
+  readonly requires_totp?: boolean;
   readonly message?: string;
 }
 
@@ -197,6 +204,7 @@ export function createConsoleAuthRoutes(
         username: t.Optional(t.String()),
         email: t.Optional(t.String()),
         password: t.String(),
+        totp_code: t.Optional(t.String()),
       }),
     },
     async ({ body, request, cookie, set }) => {
@@ -260,6 +268,42 @@ export function createConsoleAuthRoutes(
         }
         set.status = 401;
         return { status: "failed", message: "Invalid credentials" } satisfies LoginResponse;
+      }
+
+      // Check if Two-Factor Authentication is enabled
+      const totpCfg = await getTenantTotpConfig(database, user.tenantId);
+      if (totpCfg.enabled) {
+        const rawTotp = (body as Record<string, unknown>).totp_code;
+        const code = typeof rawTotp === "string" ? rawTotp.trim() : "";
+        if (!code) {
+          return {
+            status: "failed",
+            requires_totp: true,
+            message: "Two-factor authentication code required",
+          } satisfies LoginResponse;
+        }
+        let totpOk = false;
+        if (code.includes("-")) {
+          const h = hashBackupCode(code);
+          if (totpCfg.backupHashes.includes(h)) {
+            totpOk = true;
+            const remaining = totpCfg.backupHashes.filter((b) => b !== h);
+            await saveTenantTotpConfig(database, user.tenantId, {
+              ...totpCfg,
+              backupHashes: remaining,
+            });
+          }
+        } else {
+          totpOk = verifyTotpCode(totpCfg.secret, code);
+        }
+        if (!totpOk) {
+          set.status = 401;
+          return {
+            status: "failed",
+            requires_totp: true,
+            message: "Invalid two-factor authentication code",
+          } satisfies LoginResponse;
+        }
       }
 
       await lockoutService.clearFailures(lockoutKey);

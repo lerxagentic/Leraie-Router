@@ -43,6 +43,7 @@ import { Inline } from "../../components/ui/inline";
 import { Stack } from "../../components/ui/stack";
 import { useReducedMotion } from "../../hooks/use-reduced-motion";
 import ProviderTopology from "./ProviderTopology";
+import { LatencyCard } from "./components/LatencyCard";
 import {
   useUsageBy,
   useUsageChart,
@@ -1568,6 +1569,9 @@ export default function Usage(): ReactNode {
           />
         </CardBody>
       </Card>
+
+      {/* Latency & Timing Distribution (9Router Pro Parity) */}
+      <LatencyCard period={period} />
 
       <Card>
         <CardHeader

@@ -52,6 +52,9 @@ import { createRemoteSupportService } from "./remote-support/service";
 import { createBackupRoutes } from "./backup/routes";
 import { createPromptInjectionRoutes } from "./prompt-injection/routes";
 import { createNotificationRoutes } from "./notifications/routes";
+import { createCacheRoutes } from "./cache/routes";
+import { createMaintenanceRoutes } from "./maintenance/routes";
+import { createTotpRoutes } from "./auth/totp-routes";
 import { BackupService } from "./backup/service";
 import type { ConsoleCredentialService } from "./auth/service";
 import { healthEvents } from "../persistence/schema";
@@ -385,4 +388,7 @@ export function registerConsoleDomains(
   console.use(createOAuthLoginRoutes(oauthConfig));
   console.use(createPromptInjectionRoutes({ db: ctx.db, accessResolver: ctx.accessResolver }));
   console.use(createNotificationRoutes({ db: ctx.db, accessResolver: ctx.accessResolver }));
+  console.use(createCacheRoutes({ db: ctx.db, accessResolver: ctx.accessResolver }));
+  console.use(createMaintenanceRoutes({ db: ctx.db, accessResolver: ctx.accessResolver }));
+  console.use(createTotpRoutes({ db: ctx.db, accessResolver: ctx.accessResolver }));
 }

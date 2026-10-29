@@ -15,6 +15,7 @@ import type {
   TelemetryEventListPage,
   UsageByResponse,
   UsageCacheResponse,
+  UsageLatencyResponse,
   UsageChartBucket,
   UsageChartResponse,
   UsageRequestDetail,
@@ -709,6 +710,76 @@ export class DrizzleObservabilityStore implements ObservabilityStore {
           : {}),
       },
       ...(captured.signals === undefined ? {} : { payloadSignals: captured.signals }),
+    };
+  }
+
+  async usageLatency(
+    tenantId: string,
+    period: string,
+  ): Promise<UsageLatencyResponse> {
+    const scope = this.usageScope(tenantId, period);
+    const rows = await this.db
+      .select({
+        providerId: telemetryEvents.providerId,
+        latencyMs: telemetryEvents.latencyMs,
+        ttfbMs: telemetryEvents.ttfbMs,
+      })
+      .from(telemetryEvents)
+      .where(and(scope, eq(telemetryEvents.status, "completed")))
+      .orderBy(desc(telemetryEvents.createdAt))
+      .limit(5000);
+
+    const totals: number[] = [];
+    const ttfts: number[] = [];
+    const byProvider: Record<string, { totals: number[]; ttfts: number[] }> = {};
+
+    for (const r of rows) {
+      const total = r.latencyMs;
+      if (typeof total === "number" && Number.isFinite(total) && total > 0) {
+        totals.push(total);
+        const p = r.providerId || "unknown";
+        if (!byProvider[p]) byProvider[p] = { totals: [], ttfts: [] };
+        byProvider[p].totals.push(total);
+      }
+      const ttft = r.ttfbMs;
+      if (typeof ttft === "number" && Number.isFinite(ttft) && ttft > 0) {
+        ttfts.push(ttft);
+        const p = r.providerId || "unknown";
+        if (!byProvider[p]) byProvider[p] = { totals: [], ttfts: [] };
+        byProvider[p].ttfts.push(ttft);
+      }
+    }
+
+    const percentile = (arr: number[], p: number): number | null => {
+      if (!arr.length) return null;
+      const idx = Math.min(arr.length - 1, Math.max(0, Math.ceil((p / 100) * arr.length) - 1));
+      return arr[idx] ?? null;
+    };
+
+    totals.sort((a, b) => a - b);
+    ttfts.sort((a, b) => a - b);
+
+    const providerStats: Record<
+      string,
+      { samples: number; totalP50: number | null; totalP95: number | null; ttftP50: number | null }
+    > = {};
+    for (const [provider, v] of Object.entries(byProvider)) {
+      v.totals.sort((a, b) => a - b);
+      v.ttfts.sort((a, b) => a - b);
+      providerStats[provider] = {
+        samples: v.totals.length,
+        totalP50: percentile(v.totals, 50),
+        totalP95: percentile(v.totals, 95),
+        ttftP50: percentile(v.ttfts, 50),
+      };
+    }
+
+    return {
+      period,
+      samples: totals.length,
+      ttft: { samples: ttfts.length, p50: percentile(ttfts, 50), p95: percentile(ttfts, 95) },
+      total: { samples: totals.length, p50: percentile(totals, 50), p95: percentile(totals, 95) },
+      byProvider: providerStats,
     };
   }
 

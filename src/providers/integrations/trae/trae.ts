@@ -86,6 +86,50 @@ function extractToken(secret: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function throwTraeUpstreamError(codeRaw: unknown, messageRaw: unknown): never {
+  const code =
+    typeof codeRaw === "number" || typeof codeRaw === "string" ? String(codeRaw) : undefined;
+  const message =
+    typeof messageRaw === "string" && messageRaw.trim().length > 0
+      ? messageRaw.trim()
+      : code !== undefined
+        ? `Trae stream error (upstream code ${code})`
+        : "Trae stream error";
+
+  if (code === "1001") {
+    throw new GatewayError(
+      "authentication_failed",
+      401,
+      `Trae could not authenticate the account (upstream code 1001): ${message}`,
+      { providerCode: "1001", providerStatus: 1001, credentialEvidence: true },
+      "upstream",
+    );
+  }
+
+  const lower = message.toLowerCase();
+  if (code === "4008" || lower.includes("exceeded the quota") || lower.includes("quota")) {
+    throw new GatewayError(
+      "quota_exceeded",
+      429,
+      `Trae quota exceeded (upstream code ${code ?? "unknown"}): ${message}`,
+      { providerCode: code ?? "4008", providerStatus: code === "4008" ? 4008 : 429 },
+      "upstream",
+    );
+  }
+
+  if (code === "4026" || lower.includes("context length exceeded") || lower.includes("too long")) {
+    throw new GatewayError(
+      "context_length_exceeded",
+      413,
+      `Trae context length exceeded (upstream code ${code ?? "4026"}): ${message}`,
+      { providerCode: code ?? "4026", providerStatus: 413 },
+      "upstream",
+    );
+  }
+
+  throw new GatewayError("platform_unavailable", 502, message, {}, "upstream");
+}
+
 class TraeAdapter implements ProviderAdapter {
   readonly provider_id: ProviderId;
   private readonly realm: TraeRealm;
@@ -202,12 +246,7 @@ class TraeAdapter implements ProviderAdapter {
       }
       if (frame.event === "error") {
         const data = frame.data as { message?: unknown; code?: unknown };
-        const message = typeof data.message === "string" && data.message.length > 0
-          ? data.message
-          : typeof data.code === "number" || typeof data.code === "string"
-            ? `Trae stream error (upstream code ${data.code})`
-            : "Trae stream error";
-        throw new GatewayError("platform_unavailable", 502, message, {}, "upstream");
+        throwTraeUpstreamError(data.code, data.message);
       }
       if (typeof frame.data !== "object" || frame.data === null) continue;
       const record = frame.data as Record<string, unknown>;

@@ -10,14 +10,14 @@ import { log } from "./logger";
 
 export interface TelegramNotificationConfig {
   readonly enabled: boolean;
-  readonly botToken?: string;
-  readonly chatId?: string;
+  readonly botToken?: string | undefined;
+  readonly chatId?: string | undefined;
 }
 
 export interface WebhookNotificationConfig {
   readonly enabled: boolean;
-  readonly url?: string;
-  readonly secret?: string;
+  readonly url?: string | undefined;
+  readonly secret?: string | undefined;
 }
 
 export interface NotificationSettings {
