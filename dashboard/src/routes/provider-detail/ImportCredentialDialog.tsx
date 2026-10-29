@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Loader2, Sparkles } from "lucide-react";
 import { useMemo, useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import { Dialog } from "../../components/ui/dialog";
@@ -7,6 +7,7 @@ import { Select } from "../../components/ui/select";
 import { Stack } from "../../components/ui/stack";
 import { useImportOAuthCredential } from "../../hooks/providers";
 import { toast } from "../../shared/toast";
+import { consoleRequest } from "../../data/api";
 
 /**
  * One operator-supplied value a login needs.
@@ -123,7 +124,33 @@ export function ImportCredentialDialog({
   const [credential, setCredential] = useState("");
   const [accountLabel, setAccountLabel] = useState("");
   const [values, setValues] = useState<Record<string, string>>(() => initialFieldValues(fields));
+  const [autoImporting, setAutoImporting] = useState(false);
   const missing = useMemo(() => missingRequiredFields(fields, values), [fields, values]);
+
+  const handleAutoImportCursor = async () => {
+    setAutoImporting(true);
+    try {
+      const res = await consoleRequest<{
+        found: boolean;
+        accessToken?: string;
+        machineId?: string;
+        error?: string;
+      }>("/oauth/cursor/auto-import");
+      if (res.found && res.accessToken) {
+        setCredential(res.accessToken);
+        if (res.machineId) {
+          setValues((prev) => ({ ...prev, machineId: res.machineId! }));
+        }
+        toast.success("Tokens detected", "Cursor accessToken and machineId auto-imported from local IDE");
+      } else {
+        toast.error("Auto-import failed", res.error ?? "Cursor state.vscdb not found");
+      }
+    } catch {
+      toast.error("Auto-import failed", "Could not read local Cursor database");
+    } finally {
+      setAutoImporting(false);
+    }
+  };
 
   const submit = () => {
     if (credential.trim().length === 0) {
@@ -191,6 +218,19 @@ export function ImportCredentialDialog({
           idPrefix="import"
           onChange={(key, value) => setValues((prev) => ({ ...prev, [key]: value }))}
         />
+        {(providerId === "cursor" || providerName.toLowerCase().includes("cursor")) && (
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={autoImporting}
+              onClick={handleAutoImportCursor}
+              icon={<Sparkles size={13} />}
+            >
+              {autoImporting ? "Scanning IDE…" : "Auto-Import from Cursor IDE"}
+            </Button>
+          </div>
+        )}
         <Input
           id="import-account-label"
           label="Account label"

@@ -644,6 +644,7 @@ export const PROVIDER_CAPABILITIES = {
       responses: "/v1/responses",
     },
     loadAdapter: async () => createApiKeyAdapter(GENERIC_API_KEY_SPECS.ollamacloud),
+    loadModels: async () => (await import("./integrations/ollamacloud-models")).OLLAMACLOUD_MODELS,
     loadQuotaCollector: quotaCapability(() => import("./integrations/ollama-cloud-quota"), "fetchOllamaQuota"),
     loadModelDiscovery: openAIModelDiscovery("ollamacloud", { headers: (credential) => ({ authorization: `Bearer ${credential}` }) }),
   },

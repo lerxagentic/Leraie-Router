@@ -619,9 +619,19 @@ const importBody = t.Object({
   accountLabel: t.Optional(t.String()),
 });
 
+import { performCursorAutoImport } from "./cursor-auto-import";
+
 export function createOAuthLoginRoutes(config: OAuthLoginConfig): Elysia {
   const factory = createOAuthLoginOperations(config);
-  return new Elysia({ prefix: "/providers" })
+  return new Elysia()
+    .get("/oauth/cursor/auto-import", async () => {
+      return performCursorAutoImport();
+    })
+    .use(
+      new Elysia({ prefix: "/providers" })
+        .get("/cursor/oauth/auto-import", async () => {
+          return performCursorAutoImport();
+        })
     .post(
       "/:providerId/oauth/authorize",
       { body: startBody },
@@ -701,6 +711,6 @@ export function createOAuthLoginRoutes(config: OAuthLoginConfig): Elysia {
           return oauthErrorResponse(e, set);
         }
       },
-    ) as unknown as Elysia;
+    )) as unknown as Elysia;
 }
 

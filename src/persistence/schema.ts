@@ -432,6 +432,7 @@ export const modelComboStrategy = pgEnum("model_combo_strategy", [
   "fallback",
   "round_robin",
   "fusion",
+  "smart",
 ]);
 
 /** Canonical `ComboStrategy` union, derived from the enum above. Console
@@ -836,6 +837,8 @@ export interface ConsoleSettingsPreferences {
   invokeDisabled?: boolean;
   /** Slack above configured concurrency limits; null uses no slack. */
   concurrencyTolerance?: number | null;
+  /** Auto proxy for tests: connections without their own proxy borrow an active pool when tested. */
+  autoProxyForTests?: boolean;
   /** Captured payload detail lifetime in minutes; null uses deployment default. */
   telemetryWindowMinutes?: number | null;
   /** Normalizes provider-native thinking config for non-user final turns. */

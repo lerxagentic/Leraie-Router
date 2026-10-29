@@ -28,6 +28,7 @@ import { sharedClaudeSlowLanes } from "../../providers/integrations/claude/claud
 import type { ProviderQuotaWindow } from "../../providers/quota/quota-contracts";
 import { log } from "../../observability/logger";
 import { sortCandidatesByLru } from "./lru-overlay";
+import { orderComboGroupsSmart } from "./smart-combo";
 import {
   lookupRouteCandidates,
   parseModelReference,
@@ -977,6 +978,9 @@ export class RoutingEngine {
         const chosen = rr.next(heads, 1);
         const startIndex = chosen ? heads.indexOf(chosen) : 0;
         matching = [...groups.slice(startIndex), ...groups.slice(0, startIndex)].flat();
+      } else if (combo.strategy === "smart" && groups.length > 1) {
+        const smartGroups = orderComboGroupsSmart(groups, resolved.model);
+        matching = smartGroups.flat();
       } else {
         matching = groups.flat();
       }

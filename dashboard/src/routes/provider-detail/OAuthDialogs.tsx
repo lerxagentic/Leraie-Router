@@ -79,6 +79,7 @@ export function OAuthBrowserDialog({
   const accountsQuery = useProviderAccounts(providerId);
   const baselineAccountIdsRef = useRef<ReadonlySet<string> | null>(null);
   const completionDetectedRef = useRef(false);
+  const [baselinePending, setBaselinePending] = useState(true);
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -90,6 +91,19 @@ export function OAuthBrowserDialog({
   }, [queryClient, providerId]);
 
   useEffect(() => {
+    let cancelled = false;
+    void queryClient
+      .invalidateQueries({ queryKey: queryKeys.providers.accounts(providerId) })
+      .finally(() => {
+        if (!cancelled) setBaselinePending(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [queryClient, providerId]);
+
+  useEffect(() => {
+    if (baselinePending) return;
     const ids = accountsQuery.data?.map((account) => account.id) ?? null;
     if (ids === null) return;
     if (baselineAccountIdsRef.current === null) {
@@ -103,7 +117,7 @@ export function OAuthBrowserDialog({
     popup.close();
     toast.success("Account connected", "OAuth login completed successfully");
     onClose(true);
-  }, [accountsQuery.data, popup, onClose]);
+  }, [accountsQuery.data, baselinePending, popup, onClose]);
 
   const cancel = () => {
     popup.close();

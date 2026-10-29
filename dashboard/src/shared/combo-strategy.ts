@@ -14,4 +14,5 @@ export const COMBO_STRATEGY_OPTIONS: ReadonlyArray<SelectOption & { value: Combo
   { value: "fallback", label: "Fallback (try in order)" },
   { value: "round_robin", label: "Round Robin (rotate)" },
   { value: "fusion", label: "Fusion (panel + judge)" },
+  { value: "smart", label: "Smart Router (System One adaptive)" },
 ];

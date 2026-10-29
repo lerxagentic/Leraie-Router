@@ -75,7 +75,40 @@ export function createQuotaEgressFetcher(
       globalRouting?.bypassProxy,
       DEFAULT_PROXY_BYPASS_PROVIDER_IDS.has(providerId),
     );
-    if (bypass) return asFetchLike(deps.networkBindingFactory.fetch(undefined, tenantId));
+    if (bypass) {
+      const direct = deps.networkBindingFactory.fetch(undefined, tenantId);
+      return asFetchLike(async (input, init) => {
+        try {
+          const res = await direct(input, init);
+          if (res.ok || (res.status >= 200 && res.status < 500 && res.status !== 403 && res.status !== 429)) {
+            return res;
+          }
+          const activePools = await deps.db
+            .select({ id: networkPools.id })
+            .from(networkPools)
+            .where(and(eq(networkPools.tenantId, tenantId), eq(networkPools.status, "active")));
+          if (activePools.length > 0) {
+            const picked = activePools[Math.floor(Math.random() * activePools.length)]!;
+            return await deps.networkBindingFactory.fetch(picked.id, tenantId)(input, init);
+          }
+          return res;
+        } catch (err) {
+          try {
+            const activePools = await deps.db
+              .select({ id: networkPools.id })
+              .from(networkPools)
+              .where(and(eq(networkPools.tenantId, tenantId), eq(networkPools.status, "active")));
+            if (activePools.length > 0) {
+              const picked = activePools[Math.floor(Math.random() * activePools.length)]!;
+              return await deps.networkBindingFactory.fetch(picked.id, tenantId)(input, init);
+            }
+          } catch {
+            // fall through
+          }
+          throw err;
+        }
+      });
+    }
 
     const [pools, strategyRows] = await Promise.all([
       deps.db
@@ -93,7 +126,28 @@ export function createQuotaEgressFetcher(
     const eligible = assignedPoolId ? active.filter((pool) => pool.id === assignedPoolId) : active;
     // No configured active pool is direct egress in dispatch too. A configured
     // pool that is currently full/cooling fails closed below.
-    if (eligible.length === 0) return asFetchLike(deps.networkBindingFactory.fetch(undefined, tenantId));
+    if (eligible.length === 0) {
+      const direct = deps.networkBindingFactory.fetch(undefined, tenantId);
+      return asFetchLike(async (input, init) => {
+        try {
+          const res = await direct(input, init);
+          if (res.ok || (res.status >= 200 && res.status < 500 && res.status !== 403 && res.status !== 429)) {
+            return res;
+          }
+          if (active.length > 0) {
+            const picked = active[Math.floor(Math.random() * active.length)]!;
+            return await deps.networkBindingFactory.fetch(picked.id, tenantId)(input, init);
+          }
+          return res;
+        } catch (err) {
+          if (active.length > 0) {
+            const picked = active[Math.floor(Math.random() * active.length)]!;
+            return await deps.networkBindingFactory.fetch(picked.id, tenantId)(input, init);
+          }
+          throw err;
+        }
+      });
+    }
 
     const limits: Record<string, number> = {};
     const weights: Record<string, number> = {};
@@ -131,6 +185,8 @@ export function createQuotaEgressFetcher(
       }
       try {
         return await deps.networkBindingFactory.fetch(slot.poolId, tenantId)(input, init);
+      } catch {
+        return await deps.networkBindingFactory.fetch(undefined, tenantId)(input, init);
       } finally {
         slot.release();
       }
