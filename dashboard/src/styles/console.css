@@ -1903,28 +1903,34 @@
 }
 
 
-/* Settings keeps related controls compact: security/privacy share the first
-   row, while the wider backup surface spans the full grid below. */
+/* Settings panels vary wildly in height (a 3-field password form next to a
+ * one-line 2FA status). A plain 2-col grid pairs cards by source order and
+ * stretches each row to its tallest cell, leaving a dead gap under every
+ * short card paired with a tall one. A CSS multi-column layout flows cards
+ * top-to-bottom within a column instead of pairing them by row, so a short
+ * card is simply followed by the next one with no row to stretch.
+ */
 .settings-column {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  align-items: start;
-  gap: 16px;
+  column-count: 2;
+  column-gap: 16px;
   width: 100%;
-  min-width: 0;
 }
 
+.settings-column > * {
+  break-inside: avoid;
+  margin-bottom: 16px;
+}
+
+/* The wider backup surface still spans both columns, and needs no bottom
+ * margin since it's the last thing on the page. */
 .settings-column > :last-child {
-  grid-column: 1 / -1;
+  margin-bottom: 0;
+  column-span: all;
 }
 
 @media (max-width: 820px) {
   .settings-column {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .settings-column > :last-child {
-    grid-column: auto;
+    column-count: 1;
   }
 }
 
