@@ -182,7 +182,7 @@ export default function PromptInjection(): React.ReactNode {
         description="Inject custom instructions, system prompts, or multi-turn chat scripts (Global, per API Key, or as custom Model Variants)."
       />
 
-      <div style={{ display: "flex", gap: "8px", borderBottom: "1px solid var(--inner-border)", paddingBottom: "12px" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "8px", borderBottom: "1px solid var(--inner-border)", paddingBottom: "12px" }}>
         <Button
           variant={activeTab === "global" ? "primary" : "secondary"}
           size="sm"
@@ -275,7 +275,13 @@ export default function PromptInjection(): React.ReactNode {
               subtitle="A custom-named alias model backed by one real provider/model. Picking the variant serves the model WITH this prompt; calling the raw model serves it cleanly."
             />
             <CardBody style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px" }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
+                  gap: "16px",
+                }}
+              >
                 <div>
                   <label style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-secondary)", marginBottom: "6px", display: "block" }}>
                     Variant Name (CLI / Client call identifier)
@@ -357,12 +363,14 @@ export default function PromptInjection(): React.ReactNode {
                         padding: "16px 20px",
                         borderBottom: "1px solid var(--inner-border)",
                         display: "flex",
+                        flexWrap: "wrap",
                         justifyContent: "space-between",
                         alignItems: "center",
+                        gap: "8px",
                       }}
                     >
-                      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
+                        <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px" }}>
                           <span style={{ fontWeight: 700, fontSize: "14px" }}>{name}</span>
                           <span style={{ color: "var(--text-tertiary)", fontSize: "12px" }}>→</span>
                           <Badge tone="default">{v.model}</Badge>
@@ -465,11 +473,13 @@ export default function PromptInjection(): React.ReactNode {
                         padding: "16px 20px",
                         borderBottom: "1px solid var(--inner-border)",
                         display: "flex",
+                        flexWrap: "wrap",
                         justifyContent: "space-between",
                         alignItems: "center",
+                        gap: "8px",
                       }}
                     >
-                      <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "4px", minWidth: 0 }}>
                         <span style={{ fontWeight: 600, fontSize: "13px", fontFamily: "monospace" }}>{id}</span>
                         <span style={{ fontSize: "12px", color: "var(--text-secondary)" }}>
                           {p.text || p.content || "(No prompt)"}

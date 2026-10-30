@@ -1569,6 +1569,7 @@ export default function ModelLab(): ReactNode {
                   style={{
                     display: "flex",
                     alignItems: "center",
+                    flexWrap: "wrap",
                     gap: "6px",
                     marginTop: "4px",
                     width: "100%",
