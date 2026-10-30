@@ -958,14 +958,30 @@ export class ProviderProbingService {
     const [firstModelId, ...restModelIds] = modelIds;
     if (firstModelId === undefined) return { providerId, results };
 
+    const startedAt = Date.now();
+    // `probeModel` returns `{ ok: false, error }` for a probe that fails
+    // cleanly, but an unexpected throw (a DB error, an unhandled adapter
+    // exception) is still possible. The batch below already tolerates that
+    // via `Promise.allSettled`; the first model did not, so one model
+    // throwing turned "Test all" into a 500 for the whole provider instead
+    // of just that one row reporting failed.
     const runOne = async (modelId: string): Promise<void> => {
-      const outcome = await this.probeModel(tenantId, providerId, { modelId });
-      results.push({
-        modelId,
-        ok: outcome.ok,
-        latencyMs: outcome.latencyMs,
-        ...(outcome.error ? { error: outcome.error } : {}),
-      });
+      try {
+        const outcome = await this.probeModel(tenantId, providerId, { modelId });
+        results.push({
+          modelId,
+          ok: outcome.ok,
+          latencyMs: outcome.latencyMs,
+          ...(outcome.error ? { error: outcome.error } : {}),
+        });
+      } catch (error) {
+        results.push({
+          modelId,
+          ok: false,
+          latencyMs: Date.now() - startedAt,
+          error: error instanceof Error ? error.message : "Probe failed",
+        });
+      }
     };
 
     await runOne(firstModelId);
