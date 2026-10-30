@@ -110,6 +110,35 @@ describe("sortPools", () => {
     expect(sorted.map((p) => p.id)).toEqual(["fast", "mid", "slow"]);
   });
 
+  test("speed sorts numerically on the measured Mbps, highest first when descending", () => {
+    // The dedicated speed column: unrelated to the egress-IP string sort on
+    // "address", driven by a separate getter so the table can rank by
+    // measured throughput.
+    const fast = pool({ id: "fast" });
+    const slow = pool({ id: "slow" });
+    const mid = pool({ id: "mid" });
+    const speed = (p: NetworkPoolResponse): number | undefined =>
+      ({ fast: 120.5, slow: 3.2, mid: 40 })[p.id] as number | undefined;
+    const ascending = sortPools([slow, fast, mid], "speed", "asc", noLatency, speed);
+    expect(ascending.map((p) => p.id)).toEqual(["slow", "mid", "fast"]);
+    const descending = sortPools([slow, fast, mid], "speed", "desc", noLatency, speed);
+    expect(descending.map((p) => p.id)).toEqual(["fast", "mid", "slow"]);
+  });
+
+  test("speed sorts untested pools last in both directions", () => {
+    const tested = pool({ id: "tested" });
+    const untested = pool({ id: "untested" });
+    const speed = (p: NetworkPoolResponse): number | undefined => (p.id === "tested" ? 50 : undefined);
+    expect(sortPools([untested, tested], "speed", "asc", noLatency, speed).map((p) => p.id)).toEqual([
+      "tested",
+      "untested",
+    ]);
+    expect(sortPools([untested, tested], "speed", "desc", noLatency, speed).map((p) => p.id)).toEqual([
+      "tested",
+      "untested",
+    ]);
+  });
+
   test("unknown values sort last in BOTH directions", () => {
     // The documented rule, and the reason it exists: a pool with no measurement
     // must not be presented as the fastest (ascending) or the slowest

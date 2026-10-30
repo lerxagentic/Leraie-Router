@@ -11,7 +11,7 @@ import type { NetworkPoolResponse } from "../data/contracts";
  */
 export const MAX_BATCH_PROBE_TARGETS = 100;
 
-export type PoolSortKey = "name" | "address" | "load";
+export type PoolSortKey = "name" | "address" | "speed" | "load";
 export type PoolSortDirection = "asc" | "desc";
 
 /** The value a column sorts on. `null` means "not known yet". */
@@ -19,12 +19,15 @@ function poolSortValue(
   pool: NetworkPoolResponse,
   key: PoolSortKey,
   latencyMs: number | undefined,
+  speedMbps?: number | undefined,
 ): string | number | null {
   switch (key) {
     case "name":
       return (pool.label || pool.endpoint).toLowerCase();
     case "address":
       return pool.egressIp ?? null;
+    case "speed":
+      return speedMbps ?? null;
     case "load":
       return latencyMs ?? null;
   }
@@ -42,11 +45,12 @@ export function sortPools(
   key: PoolSortKey,
   direction: PoolSortDirection,
   latencyOf: (pool: NetworkPoolResponse) => number | undefined,
+  speedOf?: (pool: NetworkPoolResponse) => number | undefined,
 ): NetworkPoolResponse[] {
   const dir = direction === "asc" ? 1 : -1;
   return [...pools].sort((left, right) => {
-    const a = poolSortValue(left, key, latencyOf(left));
-    const b = poolSortValue(right, key, latencyOf(right));
+    const a = poolSortValue(left, key, latencyOf(left), speedOf?.(left));
+    const b = poolSortValue(right, key, latencyOf(right), speedOf?.(right));
     if (a === null && b === null) return 0;
     if (a === null) return 1;
     if (b === null) return -1;
