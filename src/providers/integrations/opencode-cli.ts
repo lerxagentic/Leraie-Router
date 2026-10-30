@@ -72,7 +72,7 @@ export function formatOpencodeCliPrompt(request?: CanonicalRequest, payload?: un
  * request deadline — turning a sub-second upstream rejection into a 2-minute
  * hang for the client.
  */
-const CLI_EXEC_TIMEOUT_MS = 20_000;
+const CLI_EXEC_TIMEOUT_MS = 10_000;
 
 export async function executeOpencodeCli(
   executable: string,
