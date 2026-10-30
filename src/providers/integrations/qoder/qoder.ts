@@ -893,8 +893,52 @@ function repairJsonQuotes(text: string): string {
   return text.replace(/\\"/g, ph).replace(/"/g, '\\"').replaceAll(ph, '\\"');
 }
 
-/** `[{"name":"…","arguments":"<unescaped JSON>"}]`, one call only. */
-const ECHO_LOOSE_RE = /^\[\s*\{\s*"name"\s*:\s*"([^"]{1,200})"\s*,\s*"arguments"\s*:\s*"(.*)"\s*\}\s*\]$/s;
+/**
+ * Escapes literal control characters that occur inside JSON string values.
+ * The model often writes multi-line argument content as real newlines
+ * instead of `\n` escapes; only characters inside strings are escaped.
+ */
+function escapeControlInsideStrings(text: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i] ?? "";
+    if (inString) {
+      if (ch === "\\") {
+        out += ch;
+        i += 1;
+        if (i < text.length) out += text[i];
+        continue;
+      }
+      if (ch === '"') {
+        inString = false;
+        out += ch;
+        continue;
+      }
+      if (ch === "\n") {
+        out += "\\n";
+        continue;
+      }
+      if (ch === "\r") {
+        out += "\\r";
+        continue;
+      }
+      if (ch === "\t") {
+        out += "\\t";
+        continue;
+      }
+      if (ch.charCodeAt(0) < 0x20) {
+        out += "\\u" + ch.charCodeAt(0).toString(16).padStart(4, "0");
+        continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    out += ch;
+  }
+  return out;
+}
 
 /**
  * Any spelling of the INTL tool-call leak marker — the square-bracket
@@ -977,19 +1021,102 @@ function qoderStillLeakCandidate(text: string): boolean {
  * strict checks as a normally-parsed array.
  */
 function salvageEchoArray(rest: string): unknown {
-  const m = ECHO_LOOSE_RE.exec(rest.trim());
-  if (!m) return null;
-  const name = m[1] ?? "";
-  const raw = m[2] ?? "";
-  for (const candidate of [raw, repairJsonQuotes(raw)]) {
-    try {
-      JSON.parse(candidate);
-      return [{ name, arguments: candidate }];
-    } catch {
+  const src = rest.trim();
+  if (src.length === 0) return null;
+  const calls: Array<{ name: string; arguments: string }> = [];
+  let i = 0;
+  const bracketed = src[0] === "[";
+  if (bracketed) i = 1;
+  const skipWs = (): void => {
+    while (
+      i < src.length &&
+      (src[i] === " " || src[i] === "\t" || src[i] === "\n" || src[i] === "\r")
+    ) {
+      i += 1;
+    }
+  };
+  const NAME_RE = /"name"\s*:\s*"([^"]{1,200})"/y;
+  const ARG_KEY_RE = /"arguments"\s*:\s*"/y;
+
+  for (;;) {
+    skipWs();
+    if (i >= src.length) break;
+    if (bracketed && src[i] === "]") break;
+    if (src[i] !== "{") return null;
+    i += 1;
+    skipWs();
+    NAME_RE.lastIndex = i;
+    const nameMatch = NAME_RE.exec(src);
+    if (!nameMatch) return null;
+    const name = nameMatch[1] ?? "";
+    i = NAME_RE.lastIndex;
+    skipWs();
+    if (i < src.length && src[i] === ",") {
+      i += 1;
+      skipWs();
+    }
+    ARG_KEY_RE.lastIndex = i;
+    if (!ARG_KEY_RE.exec(src)) return null;
+    const argStart = ARG_KEY_RE.lastIndex;
+    let rawEnd = -1;
+    for (let j = argStart; j + 1 < src.length; j += 1) {
+      if (src[j] === "}" && src[j + 1] === '"') {
+        rawEnd = j;
+        break;
+      }
+    }
+    if (rawEnd < 0) return null;
+    const raw = src.slice(argStart, rawEnd + 1);
+    const parsedArgs = [
+      raw,
+      escapeControlInsideStrings(raw),
+      repairJsonQuotes(raw),
+      escapeControlInsideStrings(repairJsonQuotes(raw)),
+    ].find((candidate) => {
+      try {
+        JSON.parse(candidate);
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    if (parsedArgs === undefined) return null;
+    calls.push({ name, arguments: parsedArgs });
+    i = rawEnd + 2;
+    skipWs();
+    if (i >= src.length || src[i] !== "}") return null;
+    i += 1;
+    skipWs();
+    if (i < src.length && src[i] === ",") {
+      i += 1;
       continue;
     }
+    if (i < src.length && bracketed && src[i] === "]") continue;
+    if (i < src.length) return null;
   }
-  return null;
+  return calls.length > 0 ? calls : null;
+}
+
+/**
+ * True when `text` is clearly an attempted tool-protocol echo rather than
+ * ordinary prose: a leak marker followed by the start of a JSON array/object,
+ * or of a tool-style tag. Used by the fail-closed decision at end of stream:
+ * an echo that cannot be recovered fails the turn instead of surfacing
+ * protocol text as visible content.
+ */
+export function isQoderEchoAttempt(text: string): boolean {
+  const fence = text.match(/^```[a-z]*\s*\n?/i);
+  const src = fence && fence[0] ? text.slice(fence[0].length) : text;
+  const marker = LEAK_MARKER_ANY_RE.exec(src);
+  if (!marker) return false;
+  const rest = src.slice(marker.index + marker[0].length).trim();
+  return (
+    rest.startsWith("[") ||
+    rest.startsWith("{") ||
+    /^<[a-zA-Z0-9_.:-]+\b/.test(rest) ||
+    rest.startsWith("<[") ||
+    rest.startsWith("<{")
+  );
 }
 
 /**
@@ -1034,14 +1161,28 @@ export function parseLeakedToolCalls(
   try {
     parsed = JSON.parse(rest);
   } catch {
-    // A model echoing the call writes the inner quotes unescaped:
-    // `[{"name":"Read","arguments":"{"file_path":"a.ts"}"}]`. That is not
-    // valid JSON at either level, so the array has to be rebuilt before it can
-    // be trusted. Only the single-call shape is salvaged, which is what an echo
-    // almost always is.
-    const salvaged = salvageEchoArray(rest);
-    if (salvaged === null) return { calls: [], clean: text };
-    parsed = salvaged;
+    try {
+      // Multi-line argument content written as real newlines instead of
+      // `\n` escapes poisons a strict parse but is otherwise well-formed.
+      parsed = JSON.parse(escapeControlInsideStrings(rest));
+    } catch {
+      // A model echoing the call writes the inner quotes unescaped:
+      // `[{"name":"Read","arguments":"{"file_path":"a.ts"}"}]`, or emits a
+      // bare comma-separated object list (`{...},{...}`) without the
+      // wrapping brackets. Neither is valid JSON at either level, so the
+      // array has to be rebuilt before it can be trusted.
+      let wrapped: unknown;
+      try {
+        wrapped = JSON.parse(`[${rest}]`);
+      } catch {
+        wrapped = undefined;
+      }
+      const salvaged = salvageEchoArray(rest);
+      if (salvaged === null && wrapped === undefined) {
+        return { calls: [], clean: text };
+      }
+      parsed = salvaged ?? wrapped;
+    }
   }
   if (Array.isArray(parsed) && parsed.length === 0) return { calls: [], clean: text };
 
@@ -1056,16 +1197,35 @@ export function parseLeakedToolCalls(
     const name = typeof rec["name"] === "string" ? rec["name"].trim() : "";
     if (name.length === 0) return { calls: [], clean: text };
     if (allowedNames && !allowedNames.has(name)) return { calls: [], clean: text };
-    let args = rec["arguments"];
-    if (typeof args === "object" && args !== null) args = JSON.stringify(args);
-    if (typeof args !== "string") return { calls: [], clean: text };
-    // Arguments that do not parse are not a call this can trust.
-    if (args.trim().length > 0) {
+    const rawArgs = rec["arguments"];
+    let args: string;
+    if (typeof rawArgs === "object" && rawArgs !== null) args = JSON.stringify(rawArgs);
+    else if (typeof rawArgs === "string") args = rawArgs;
+    else return { calls: [], clean: text };
+    // Arguments that do not parse are not a call this can trust. Literal
+    // newlines/tabs inside the argument string (common when the model
+    // writes multi-line content) are repaired once before giving up.
+    const argsText = args.trim();
+    if (argsText.length > 0) {
+      let accepted = argsText;
+      let ok = false;
       try {
-        JSON.parse(args);
+        JSON.parse(accepted);
+        ok = true;
       } catch {
-        return { calls: [], clean: text };
+        // fall through to normalization
       }
+      if (!ok) {
+        accepted = escapeControlInsideStrings(argsText);
+        try {
+          JSON.parse(accepted);
+          ok = true;
+        } catch {
+          // still invalid
+        }
+      }
+      if (!ok) return { calls: [], clean: text };
+      args = accepted;
     }
     calls.push({ id: `call_${randomUUID().replace(/-/g, "").slice(0, 16)}`, name, arguments: args });
   }
@@ -1400,6 +1560,17 @@ export async function* qoderBodyToCanonicalEvents(
           } as CanonicalEvent;
         }
         finishReason = "tool_calls";
+      } else if (isQoderEchoAttempt(leakBuf)) {
+        // Unmistakably an echo (marker + JSON/tag start) that could not be
+        // recovered: fail the turn so the harness retries rather than
+        // surfacing raw protocol text as a visible answer.
+        throw new GatewayError(
+          "platform_unavailable",
+          502,
+          "Qoder returned an unparseable tool-call echo; no tools were emitted",
+          { providerId: "qoder" },
+          "upstream",
+        );
       } else if (leaked.clean.length > 0) {
         yield {
           type: "content_delta",

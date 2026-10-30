@@ -1737,6 +1737,15 @@ export default function Proxy(): ReactNode {
     setDeleteTargets(targets);
   };
 
+  const requestDeleteFailed = () => {
+    const targets = pools.filter((p) => {
+      const result = checkResults[p.id];
+      return result !== undefined && result.status !== "healthy";
+    });
+    if (targets.length === 0) return;
+    setDeleteTargets(targets);
+  };
+
   const confirmDelete = async () => {
     if (!deleteTargets) return;
     await Promise.all(deleteTargets.map((p) => deletePool.mutateAsync(p.id)));
@@ -1962,6 +1971,18 @@ export default function Proxy(): ReactNode {
                 >
                   Delete selected
                 </Button>
+                {errorCount > 0 && (
+                  <Button
+                    variant="danger"
+                    size="sm"
+                    disabled={deletePool.isPending}
+                    icon={<Trash2 size={12} />}
+                    onClick={requestDeleteFailed}
+                    title={`Delete every pool whose last test result was not healthy (${errorCount})`}
+                  >
+                    {`Delete failed (${errorCount})`}
+                  </Button>
+                )}
               </div>
             </div>
           )}
