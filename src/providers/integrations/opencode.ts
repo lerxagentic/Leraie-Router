@@ -258,28 +258,15 @@ export class OpenCodeFreeAdapter extends OpenAICompatibleAdapter {
       }
     }
 
-    const res = await super.executeTransport(headers, payload, context, request, candidate);
-
-    // If HTTP returned 429 FreeUsageLimitError or 403 FreeTierError, and CLI is available, fall back to CLI
-    if ((res.status === 429 || res.status === 403) && opencodeBin && candidate?.wire_family === "chat") {
-      try {
-        const clone = res.clone();
-        const bodyText = await clone.text().catch(() => "");
-        if (
-          bodyText.includes("FreeUsageLimitError") ||
-          bodyText.includes("FreeTierError") ||
-          bodyText.includes("free usage")
-        ) {
-          const prompt = formatOpencodeCliPrompt(request, payload);
-          const text = await executeOpencodeCli(opencodeBin, targetModel, prompt, context.abort_signal);
-          return wrapTextAsSseResponse(text, rawModel);
-        }
-      } catch {
-        // Return original HTTP response on fallback failure
-      }
-    }
-
-    return res;
+    // No second CLI attempt on a 429 here: when the CLI binary is present and
+    // this is a chat model, it was ALREADY tried first (above) and either
+    // succeeded or hit this exact same free-tier rejection moments ago.
+    // Retrying it again behind an HTTP 429 doubled the wait (CLI, then HTTP,
+    // then CLI again) for an identical verdict. The HTTP response is
+    // returned as-is; its rate-limit evidence lets the dispatch-level policy
+    // (classifyUpstreamFailure's provider-wide-quota check) stop failing over
+    // to other candidates instead of retrying a rejection that is final.
+    return await super.executeTransport(headers, payload, context, request, candidate);
   }
 }
 
