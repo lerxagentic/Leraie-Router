@@ -63,6 +63,17 @@ export function formatOpencodeCliPrompt(request?: CanonicalRequest, payload?: un
   return "ping";
 }
 
+/**
+ * Upper bound on how long the CLI fallback gets before it's killed and the
+ * caller falls through to the HTTP wire. The CLI does not exit promptly on
+ * its own after a provider-side rejection (e.g. the free-tier rate limit):
+ * it logs the error within a few seconds but then sits past that, so without
+ * its own timeout here the only thing stopping it is the global ~120s
+ * request deadline — turning a sub-second upstream rejection into a 2-minute
+ * hang for the client.
+ */
+const CLI_EXEC_TIMEOUT_MS = 20_000;
+
 export async function executeOpencodeCli(
   executable: string,
   targetModel: string,
@@ -74,10 +85,25 @@ export async function executeOpencodeCli(
   return new Promise((resolve, reject) => {
     let stdoutText = "";
     let stderrText = "";
+    let settled = false;
     const child = spawn(executable, cliArgs, {
       env: { ...process.env, HOME: homeDir, NO_PROXY: "127.0.0.1,localhost,::1" },
       stdio: ["pipe", "pipe", "pipe"],
     });
+
+    const finish = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      fn();
+    };
+
+    const timer = setTimeout(() => {
+      try {
+        child.kill("SIGKILL");
+      } catch {}
+      finish(() => reject(new Error(`OpenCode CLI timed out after ${CLI_EXEC_TIMEOUT_MS}ms`)));
+    }, CLI_EXEC_TIMEOUT_MS);
 
     if (signal) {
       signal.addEventListener(
@@ -86,7 +112,7 @@ export async function executeOpencodeCli(
           try {
             child.kill("SIGKILL");
           } catch {}
-          reject(new Error("Request aborted"));
+          finish(() => reject(new Error("Request aborted")));
         },
         { once: true },
       );
@@ -107,16 +133,18 @@ export async function executeOpencodeCli(
     });
 
     child.on("error", (err) => {
-      reject(err);
+      finish(() => reject(err));
     });
 
     child.on("close", (code) => {
-      if (code === 0 && stdoutText.trim()) {
-        const cleanText = stdoutText.trim().replace(/^>[^\n]*\n+/g, "").trim();
-        return resolve(cleanText || stdoutText.trim());
-      }
-      const combined = `${stderrText} ${stdoutText}`.trim();
-      reject(new Error(`OpenCode CLI exited with code ${code}: ${combined.slice(0, 150)}`));
+      finish(() => {
+        if (code === 0 && stdoutText.trim()) {
+          const cleanText = stdoutText.trim().replace(/^>[^\n]*\n+/g, "").trim();
+          return resolve(cleanText || stdoutText.trim());
+        }
+        const combined = `${stderrText} ${stdoutText}`.trim();
+        reject(new Error(`OpenCode CLI exited with code ${code}: ${combined.slice(0, 150)}`));
+      });
     });
   });
 }
