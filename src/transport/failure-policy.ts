@@ -316,6 +316,16 @@ export function classifyUpstreamFailure(error: unknown): UpstreamFailurePolicy {
   else if (credentialEvidence || policyAccountEvidence) scope = "account";
   else scope = "provider";
   const retryAfterMs = typeof error.details.retryAfterMs === "number" ? error.details.retryAfterMs : undefined;
+  // A quota failure the upstream itself scoped to the whole provider (its
+  // free tier, not this one credential) is not something a sibling
+  // account/pool survives — every candidate behind the same provider will
+  // see the identical rejection. Retrying anyway paid the full per-attempt
+  // cost (CLI spawn, proxy dial, HTTP round-trip) N times for a verdict that
+  // was already final on attempt one. `mutatesAccount` is untouched: this
+  // only short-circuits the pure provider-wide case, never an account-scoped
+  // quota error (which legitimately should try a sibling credential).
+  const providerWideQuota =
+    error.code === "quota_exceeded" && error.details.rateLimitScope === "provider" && !credentialEvidence;
   // The retry decision follows `statusToGatewayErrorCode` — the canonical
   // status→code table above — rather than a hand-rolled range. The two disagreed:
   // the table classifies the whole 500–599 band as `platform_unavailable`, while
@@ -337,20 +347,21 @@ export function classifyUpstreamFailure(error: unknown): UpstreamFailurePolicy {
     (statusCode >= 500 && statusCode <= 599);
   const mutatesAccount = error.origin === "upstream" && scope === "account";
   const retryable =
-    mutatesAccount || // account-scoped failure: try a sibling regardless of status
-    error.code === "capability_unsupported" ||
-    error.code === "model_not_found" ||
-    error.code === "upstream_queued" ||
-    error.code === "admission_unavailable" ||
-    error.code === "capacity_exhausted" ||
-    error.code === "accounts_unavailable" ||
-    error.code === "accounts_rate_limited" ||
-    error.code === "quota_exceeded" ||
-    error.code === "authentication_failed" ||
-    error.code === "proxy_auth_required" ||
-    error.code === "deadline_exceeded" ||
-    error.code === "context_length_exceeded" ||
-    retryableByStatus;
+    !providerWideQuota &&
+    (mutatesAccount || // account-scoped failure: try a sibling regardless of status
+      error.code === "capability_unsupported" ||
+      error.code === "model_not_found" ||
+      error.code === "upstream_queued" ||
+      error.code === "admission_unavailable" ||
+      error.code === "capacity_exhausted" ||
+      error.code === "accounts_unavailable" ||
+      error.code === "accounts_rate_limited" ||
+      error.code === "quota_exceeded" ||
+      error.code === "authentication_failed" ||
+      error.code === "proxy_auth_required" ||
+      error.code === "deadline_exceeded" ||
+      error.code === "context_length_exceeded" ||
+      retryableByStatus);
   return {
     retryable,
     mutatesAccount,
