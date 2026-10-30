@@ -1202,19 +1202,19 @@ const PoolRow = memo(function PoolRow({
           aria-label={`Select ${view.poolLabel}`}
         />
       </td>
-      <td style={{ minWidth: 0, maxWidth: "300px" }}>
+      <td style={{ minWidth: 0, width: "34%" }}>
         <PoolTitleBlock pool={pool} view={view} maskValues={maskValues} />
       </td>
-      <td style={{ maxWidth: "220px" }}>
+      <td style={{ width: "22%", maxWidth: "220px" }}>
         <PoolAddressBlock pool={pool} view={view} maskValues={maskValues} />
       </td>
-      <td style={{ maxWidth: "140px" }}>
+      <td style={{ width: "12%", maxWidth: "140px" }}>
         <PoolSpeedBlock speedResult={speedResult} isSpeedTesting={isSpeedTesting} />
       </td>
-      <td style={{ minWidth: "110px" }}>
+      <td style={{ width: "12%", minWidth: "110px", maxWidth: "150px" }}>
         <PoolUsageBars pool={pool} view={view} />
       </td>
-      <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+      <td style={{ width: "1%", whiteSpace: "nowrap", textAlign: "right" }}>
         <Inline gap="4px" justify="end">
           <PoolActionButtons
             pool={pool}
