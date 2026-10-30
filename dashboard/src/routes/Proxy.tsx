@@ -18,7 +18,7 @@ import {
 } from "lucide-react";
 import { useProviders } from "../hooks/providers";
 import { useUpdateProviderRouting } from "../hooks/routing";
-import { createContext, memo, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Badge, type BadgeTone } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardBody, CardHeader } from "../components/ui/card";
@@ -1006,7 +1006,13 @@ function PoolActionButtons({
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [selectedProvider, setSelectedProvider] = useState("");
 
-  const providers = (providersQuery.data as unknown as { providers?: Array<{ id: string; name?: string }> })?.providers ?? [];
+  // `useProviders` resolves to the array directly (assertProviders returns
+  // ProviderResponse[], not a { providers: [...] } wrapper) — the previous
+  // `.providers` cast always missed, so this dropdown was silently empty no
+  // matter how many providers the tenant had configured.
+  const providers = [...(providersQuery.data ?? [])].sort((a, b) =>
+    (a.displayName || a.providerId).localeCompare(b.displayName || b.providerId),
+  );
 
   const handleApply = async () => {
     if (!selectedProvider) return;
@@ -1051,7 +1057,7 @@ function PoolActionButtons({
               onValueChange={setSelectedProvider}
               options={[
                 { value: "", label: "Select a provider..." },
-                ...providers.map((p) => ({ value: p.id, label: p.name || p.id })),
+                ...providers.map((p) => ({ value: p.providerId, label: p.displayName || p.providerId })),
               ]}
             />
             <Inline gap="8px" justify="end" style={{ marginTop: "12px" }}>
@@ -1533,6 +1539,36 @@ export default function Proxy(): ReactNode {
   const [deleteTargets, setDeleteTargets] = useState<NetworkPoolResponse[] | null>(null);
   const [activityPool, setActivityPool] = useState<NetworkPoolResponse | null>(null);
   const pools = poolsQuery.data ?? [];
+  // Deleting a pool never removed its cached test/speed results, so a stale
+  // entry for a pool that no longer exists kept inflating "Tested N/M" and
+  // the error badge forever — there was no row left to retest or delete it
+  // from. Once the real pool list has loaded, prune anything cached for an
+  // id that is not in it.
+  useEffect(() => {
+    if (poolsQuery.isPending) return;
+    const liveIds = new Set(pools.map((p) => p.id));
+    setCheckResults((prev) => {
+      const stale = Object.keys(prev).filter((id) => !liveIds.has(id));
+      if (stale.length === 0) return prev;
+      const next = { ...prev };
+      for (const id of stale) delete next[id];
+      try {
+        localStorage.setItem("cartethyia_proxy_check_results", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    setSpeedResults((prev) => {
+      const stale = Object.keys(prev).filter((id) => !liveIds.has(id));
+      if (stale.length === 0) return prev;
+      const next = { ...prev };
+      for (const id of stale) delete next[id];
+      try {
+        localStorage.setItem("cartethyia_proxy_speed_results", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [poolsQuery.isPending, pools]);
   const sortedPools = useMemo(
     () =>
       sortPools(
