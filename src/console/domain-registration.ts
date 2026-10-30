@@ -242,6 +242,7 @@ export function registerConsoleDomains(
     accessResolver: ctx.accessResolver,
     poolSelector: ctx.poolSelector,
     db: ctx.db,
+    telemetryBuffer: ctx.telemetryBuffer,
     ...(ctx.stateStore ? { stateStore: ctx.stateStore } : {}),
   }));
   console.use(createStudioRoutes({

@@ -58,6 +58,7 @@ import { GatewayError } from "../../transport/gateway-error";
 import type { TelemetryBatchBuffer } from "../../observability/telemetry-buffer";
 import { computeTokensPerSec } from "../../observability/token-speed";
 import { TelemetryPayloadCapture } from "../../observability/payload-capture";
+import { pushStructuredConsoleLog } from "../../observability/log-ring";
 import {
   providerBaseUrl,
   parseProviderId,
@@ -278,6 +279,14 @@ export class ProviderProbingService {
      *  events, so without this the console showed "No sample text in the
      *  response" even on a fully successful search. */
     let nativeSample: string | undefined;
+    // Generated before dispatch (not after, like the enqueue below) so the
+    // dispatch-start and terminal console-log lines share one id — the same
+    // pairing live traffic gets from `attempt-loop.ts` / `error-lifecycle.ts`.
+    // Without this a Test-button probe never lit the Usage page's live
+    // provider topology graph or the Console Log stream, since both read
+    // only `request_dispatch`/`request_complete`/`request_error` lines, not
+    // the telemetry DB row this probe already wrote.
+    const requestId = crypto.randomUUID();
     try {
       // Public providers (`requires_account: false`) probe credential-free;
       // anything else resolves the health-filtered account selected above.
@@ -287,6 +296,16 @@ export class ProviderProbingService {
       const outbound = asOutboundBinding(await this.outboundFetchFor(tenantId, providerId));
       networkPoolId = outbound.networkPoolId;
       const probeFetch = createProbeFetch(outbound.fetch);
+      pushStructuredConsoleLog("info", "Proxy request dispatched", {
+        event: "request_dispatch",
+        requestId,
+        endpoint: endpointPath,
+        model: modelId,
+        routedModel: modelId,
+        providerId,
+        ...(accountId ? { accountId } : {}),
+        ...(networkPoolId ? { networkPoolId } : {}),
+      });
       try {
         if (serviceKind === "websearch") {
           if (typeof adapter.websearch !== "function") {
@@ -476,13 +495,29 @@ export class ProviderProbingService {
           endpointPath,
         });
 
-    const requestId = crypto.randomUUID();
-
     // Token speed shared with live traffic (`computeTokensPerSec`): probes
     // record TTFT+latency only, so they report end-to-end effective speed.
     const tokensPerSec = computeTokensPerSec({
       outputTokens: usage?.output_tokens,
       latencyMs,
+    });
+
+    // Terminal console-log line, paired with the dispatch-start line above by
+    // `requestId` — this is what lights up the Usage page's live provider
+    // topology graph and the Console Log stream for a Test-button probe,
+    // the same way `finalizeRequestTelemetry` does for live traffic.
+    pushStructuredConsoleLog(ok ? "info" : "error", ok ? "Proxy request completed" : "Proxy request failed", {
+      event: ok ? "request_complete" : "request_error",
+      requestId,
+      endpoint: endpointPath,
+      model: modelId,
+      routedModel: modelId,
+      providerId,
+      ...(accountId ? { accountId } : {}),
+      ...(networkPoolId ? { networkPoolId } : {}),
+      status: ok ? 200 : (upstreamStatusCode ?? 500),
+      durationMs: latencyMs,
+      ...(ok ? {} : { errorCode: errorMessage ?? "probe_failed" }),
     });
 
     // Probe telemetry rides the same batch buffer as live traffic. Keep the

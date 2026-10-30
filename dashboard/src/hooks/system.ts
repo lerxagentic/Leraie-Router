@@ -4,7 +4,65 @@ import { queryKeys } from "../data/query-keys";
 import type { SessionUser, UsageDimension } from "../data/contracts";
 import { assertAuditListPage, assertSystemHealth, assertUsageBy, assertUsageChart, assertUsageRequestDetail, assertUsageRequests, assertUsageSummary, querySignal } from "./common";
 import { DASHBOARD_QUERY_OPTIONS } from "../data/query-policy";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
+
+/**
+ * Coalesces live SSE "a request just finished" pushes into one query
+ * invalidation per short window, instead of refetching on every event. A
+ * burst of concurrent completions would otherwise fire one HTTP refetch per
+ * push; the debounce keeps the table reacting within ~150ms of the first
+ * event in a burst while still collapsing the rest.
+ */
+const LIVE_REQUEST_DEBOUNCE_MS = 150;
+
+/**
+ * Opens `/live/requests/stream` and invalidates the usage-requests query on
+ * every push so the table updates as soon as the gateway finishes a request,
+ * instead of waiting on the next 5s poll tick. Falls back silently to the
+ * existing `refetchInterval` polling on the query itself if the stream
+ * drops — this only ever makes updates arrive *sooner*, never replaces the
+ * query as the source of truth.
+ */
+function useLiveRequestInvalidation(enabled: boolean): void {
+  const queryClient = useQueryClient();
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let stopped = false;
+    let source: EventSource | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = () => {
+      if (stopped) return;
+      const nextSource = new EventSource("/console/api/live/requests/stream");
+      source = nextSource;
+      nextSource.addEventListener("request", () => {
+        if (stopped) return;
+        if (timerRef.current !== undefined) return;
+        timerRef.current = setTimeout(() => {
+          timerRef.current = undefined;
+          void queryClient.invalidateQueries({ queryKey: ["console", "usage", "requests"] });
+        }, LIVE_REQUEST_DEBOUNCE_MS);
+      });
+      nextSource.onerror = () => {
+        if (stopped) return;
+        nextSource.close();
+        if (source === nextSource) source = undefined;
+        retryTimer = setTimeout(connect, 5_000);
+      };
+    };
+
+    connect();
+    return () => {
+      stopped = true;
+      if (timerRef.current !== undefined) clearTimeout(timerRef.current);
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
+      source?.close();
+    };
+  }, [enabled, queryClient]);
+}
 
 
 /** Loads the current signed-in console user, including `isPlatformAdmin`,
@@ -80,6 +138,10 @@ export function useUsageRequests(
   limit = 50,
   httpStatus?: number | null,
 ) {
+  // SSE push drives the fast path (invalidates within ~150ms of a request
+  // finishing); the 5s `refetchInterval` stays as a floor so the table keeps
+  // moving if the stream is down or blocked by a proxy.
+  useLiveRequestInvalidation(true);
   const statusParam = httpStatus === null || httpStatus === undefined
     ? ""
     : `&httpStatus=${encodeURIComponent(String(httpStatus))}`;

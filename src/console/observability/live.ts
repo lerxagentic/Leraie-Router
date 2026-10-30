@@ -19,6 +19,7 @@ import { networkPools } from "../../persistence/schema";
 import { subscribePoolHealth } from "../../network/pool-health-machine";
 import { poolByteSnapshot } from "../../network/pool/byte-accounting";
 import { consoleSseResponse, createConsoleSseStream } from "./sse";
+import type { TelemetryBatchBuffer, TelemetryEventInput } from "../../observability/telemetry-buffer";
 
 export interface LiveConfig {
   readonly accessResolver: ConsoleAccessResolver;
@@ -30,6 +31,33 @@ export interface LiveConfig {
    * absent means the in-flight endpoints report zero rather than failing.
    */
   readonly stateStore?: ProxyRequestStateStore;
+  /**
+   * Owns the live request-log feed (`/live/requests/stream`). Optional for
+   * the same reason as `stateStore`: reduced compositions mount the other
+   * live endpoints without it and the stream simply emits nothing.
+   */
+  readonly telemetryBuffer?: TelemetryBatchBuffer;
+}
+
+/** Wire shape pushed over `/live/requests/stream`. Deliberately a narrow
+ * projection of `TelemetryEventInput` — the same fields `UsageRequestItem`
+ * exposes for the polled table, so the dashboard can reuse one row renderer
+ * for both the live push and the historical fetch. */
+function toLiveRequestRow(event: TelemetryEventInput) {
+  return {
+    requestId: event.requestId,
+    model: event.requestedModel,
+    providerId: event.providerId,
+    accountId: event.accountId,
+    httpStatus: event.httpStatus,
+    status: event.status,
+    errorOrigin: event.errorOrigin,
+    latencyMs: event.latencyMs,
+    ttfbMs: event.ttfbMs,
+    inputTokens: event.usage?.input_tokens,
+    outputTokens: event.usage?.output_tokens,
+    startedAt: new Date().toISOString(),
+  };
 }
 
 const EMPTY_IN_FLIGHT: InFlightSnapshot = { inFlight: 0, uniqueIps: 0 };
@@ -110,6 +138,24 @@ export function createLiveRoutes(config: LiveConfig): Elysia {
       } catch (e) {
         return errorResponse(e, set, "Live operation failed");
       }
+    })
+    .get("/live/requests/stream", ({ request, set }) => {
+      let tenantId: string | null;
+      try {
+        tenantId = requireScope(config.accessResolver(request), "dashboard:read").tenantId;
+      } catch (e) {
+        return errorResponse(e, set, "Live operation failed");
+      }
+      const buffer = config.telemetryBuffer;
+      return consoleSseResponse(
+        createConsoleSseStream(request.signal, ({ send }) => {
+          if (!buffer) return () => {};
+          return buffer.subscribe((event) => {
+            if (tenantId !== null && event.tenantId !== tenantId) return;
+            send("request", toLiveRequestRow(event));
+          });
+        }),
+      );
     })
     .get("/live/pools/stream", async ({ request, set }) => {
       let tenantId: string | null;

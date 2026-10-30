@@ -184,6 +184,13 @@ export class TelemetryBatchBuffer {
    * JSON serialization allocation on every request.
    */
   private readonly queue: Array<{ event: TelemetryEventInput; bytes: number }> = [];
+  /**
+   * Live subscribers for newly-enqueued events (console SSE request-log
+   * stream). Fired at enqueue time, not after the DB drain, so the
+   * dashboard sees a request the instant the gateway finishes it instead
+   * of waiting on the ~500ms flush interval plus the next poll tick.
+   */
+  private readonly liveListeners = new Set<(event: TelemetryEventInput) => void>();
   private readonly store: DrizzleTelemetryStore;
   private readonly flushIntervalMs: number;
   private readonly maxBatch: number;
@@ -231,6 +238,19 @@ export class TelemetryBatchBuffer {
     if (typeof this.timer.unref === "function") this.timer.unref();
   }
 
+  /**
+   * Registers a listener fired synchronously for every accepted (non-dropped)
+   * enqueue. Used by the console's `/live/requests/stream` SSE endpoint so
+   * the dashboard request log updates the instant the gateway finishes a
+   * request, instead of on the next DB flush + poll cycle.
+   */
+  subscribe(listener: (event: TelemetryEventInput) => void): () => void {
+    this.liveListeners.add(listener);
+    return () => {
+      this.liveListeners.delete(listener);
+    };
+  }
+
   /** Non-blocking; drops the event (and counts it) when the buffer is full by count or bytes. */
   enqueue(event: TelemetryEventInput): void {
     const bytes = estimateTelemetryEventBytes(event);
@@ -242,6 +262,10 @@ export class TelemetryBatchBuffer {
     this.queue.push({ event, bytes });
     this.queuedBytes += bytes;
     metrics.cartethyia_telemetry_buffered.inc();
+    // Fan out before the flush timer runs: listeners only need the shape of
+    // the event, not confirmation it is durable yet (the batched insert can
+    // still lag momentarily under load; the live view is best-effort).
+    for (const listener of this.liveListeners) listener(event);
     if (this.queue.length >= this.maxBatch) {
       void this.flushScheduled();
     } else if (wasEmpty && this.timer !== undefined) {
